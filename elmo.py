@@ -39,6 +39,7 @@ class PSElmo(torch.nn.Module):
         scalar_mix_parameters: List[float] = None,
         dropout: float = 0.1,
         opt: PSOptimizer = None,
+        estimate_parameters: bool = False,
     ) -> None:
         super().__init__()
         self.kv = kv
@@ -67,7 +68,7 @@ class PSElmo(torch.nn.Module):
             trainable=scalar_mix_parameters is None,
         )
         self.dropout = Dropout(p=dropout)
-
+        self.estimate_parameters = estimate_parameters
         self._lstm_offset = key_offset + len(PSEmbedding.lens(num_tokens, embedding_dim))
         self._initParameters()
 
@@ -93,8 +94,11 @@ class PSElmo(torch.nn.Module):
             update_parameter, update_accumulator = optimizer.update(grad, accumulator)
             self.kv.push(key, update_parameter.cpu())
             self.kv.push(key+1, update_accumulator.cpu())
-            ## TODO update parameters local or pull from ps?
-            ## eg: accumulator += update_accumulator
+            if self.estimate_parameters:
+                with torch.no_grad():
+                    accumulator += update_accumulator
+                    param = dict(self.named_parameters())[name]
+                    param += update_parameter
             return grad
         return hook
         

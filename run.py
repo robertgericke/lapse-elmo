@@ -41,6 +41,7 @@ args.recurrent_dropout = 0.1
 args.dropout = 0.1
 args.samples = 8192
 args.world_size = servers * num_workers_per_server
+args.sync_freq = 1
 
 
 def test2(worker_id, rank, size, kv):
@@ -88,6 +89,7 @@ def train(worker_id, rank, size, kv):
         lstm_recurrent_dropout=args.recurrent_dropout,
         dropout=args.dropout,
         opt=optimizer,
+        estimate_parameters=args.sync_freq>1,
     )
     classifier = PSSampledSoftmaxLoss(
         kv=kv, 
@@ -119,8 +121,9 @@ def train(worker_id, rank, size, kv):
     #optimizer = Adagrad(list(elmo.parameters()) + list(classifier.parameters()), lr=0.2, initial_accumulator_value=1.0)
 
     for epoch in range(args.epochs):
-        for i, batch in enumerate(loader, 1):
-            elmo.pullParameters()
+        for i, batch in enumerate(loader):
+            if i % args.sync_freq == 0:
+                elmo.pullParameters()
             word_ids = batch_to_word_ids(batch[rank::args.world_size], vocab2id)
             elmo_representation, word_mask = elmo(word_ids)
             mask = word_mask.clone()
