@@ -37,23 +37,23 @@ class PSEmbedding(torch.nn.Module): # TODO: 0-embedding not always needed
         keys = keys + self.key_offset
         size = keys.size() + (self.embedding_dim,)
         embeddings = torch.empty(size, dtype=torch.float32)
-        gradients = torch.empty(size, dtype=torch.float32)
+        accumulators = torch.empty(size, dtype=torch.float32)
         ts1 = self.kv.pull(keys.flatten(), embeddings)
-        ts2 = self.kv.pull(keys.flatten()+self.num_embeddings, gradients)
+        ts2 = self.kv.pull(keys.flatten()+self.num_embeddings, accumulators)
         self.kv.wait(ts1)
         self.kv.wait(ts2)
         embeddings = embeddings.to(device=device)
-        gradients = gradients.to(device=device)
+        accumulators = accumulators.to(device=device)
         embeddings.requires_grad_()
         if self.opt:
-            embeddings.register_hook(self.grad_hook(keys, gradients, self.opt))
+            embeddings.register_hook(self.grad_hook(keys, accumulators, self.opt))
         return embeddings
         
-    def grad_hook(self, keys: torch.Tensor, old_gradient:torch.Tensor, optimizer: PSOptimizer) -> torch.Tensor:
+    def grad_hook(self, keys: torch.Tensor, accumulators:torch.Tensor, optimizer: PSOptimizer) -> torch.Tensor:
         def hook(grad: torch.Tensor) -> torch.Tensor:
-            update_embeddings, update_gradients = optimizer.update(grad, old_gradient)
+            update_embeddings, update_accumulators = optimizer.update(grad, accumulators)
             self.kv.push(keys.flatten(), update_embeddings.cpu())
-            self.kv.push(keys.flatten()+self.num_embeddings, update_gradients.cpu())
+            self.kv.push(keys.flatten()+self.num_embeddings, update_accumulators.cpu())
             return grad
         return hook
 
