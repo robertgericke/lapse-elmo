@@ -44,33 +44,6 @@ args.world_size = servers * num_workers_per_server
 args.sync_freq = 1
 
 
-def test2(worker_id, rank, size, kv):
-    optimizer = PSAdagrad()
-    a = torch.tensor([1.0,2.0,3.0])
-    b = torch.tensor([2.0,2.0,2.0])
-    update = optimizer.update(a,b)
-    print(update)
-    
-    
-def test(worker_id, rank, size, kv):
-    optimizer = PSAdagrad()
-    vocab2id = load_vocab(args.vocab)
-    num_tokens = len(vocab2id)
-    embedding = PSEmbedding(
-        kv=kv,
-        key_offset=0,
-        num_embeddings=num_tokens, 
-        embedding_dim=args.embedding_dim,
-        opt=optimizer,
-    )
-    word_ids = torch.tensor([[1,2,3,4],[5,6,7,0]])
-    res = embedding(word_ids)
-    #print(res)
-    e = res.sum()
-    #print(e)
-    e.backward()
-    #print(res.grad)
-
 def train(worker_id, rank, size, kv):
     vocab2id = load_vocab(args.vocab)
     num_tokens = len(vocab2id)
@@ -106,19 +79,11 @@ def train(worker_id, rank, size, kv):
         device = torch.device("cuda:" + str(device_id))
         elmo.to(device)
         classifier.to(device)
-        print("cuda")
-        #elmo = DDP(elmo, device_ids=[device_id])
-        #classifier = DDP(classifier, device_ids=[device_id])
-    #else:
-        #device = torch.device("cpu")
-        #elmo = DDP(elmo)
-        #classifier = DDP(classifier)
-    
+        print(device)
 
     # set up training
     dataset = OneBillionWordIterableDataset(args.dataset)
     loader = DataLoader(dataset, batch_size=args.batch_size * args.world_size, collate_fn=list)
-    #optimizer = Adagrad(list(elmo.parameters()) + list(classifier.parameters()), lr=0.2, initial_accumulator_value=1.0)
 
     for epoch in range(args.epochs):
         for i, batch in enumerate(loader):
@@ -141,50 +106,6 @@ def train(worker_id, rank, size, kv):
             loss.backward()
             print('[%6d] loss: %.3f' % (i, loss.item()))
             kv.barrier(); # synchronize workers
-
-def run(worker_id, rank, size, kv):
-    optimizer = PSAdagrad()
-    elmo = PSElmo(
-        kv=kv,
-        key_offset=0,
-        num_tokens=num_words,
-        embedding_dim=args.embedding_dim,
-        num_layers=args.layers,
-        lstm_cell_size=args.cell_size,
-        lstm_recurrent_dropout=0.1,
-        dropout=0.1,
-        opt=optimizer,
-    )
-    classifier = PSSampledSoftmaxLoss(
-        kv=kv, 
-        key_offset=len(PSElmo.lens(num_words, args.embedding_dim, args.cell_size, args.layers)),
-        num_embeddings=num_words, 
-        embedding_dim=args.embedding_dim, 
-        num_samples=args.samples,
-        opt=optimizer,
-    )
-    
-    word_ids = torch.tensor([[1,2,3,4],[5,6,7,0]])
-    elmo_representation, word_mask = elmo(word_ids)
-    
-    mask = word_mask.clone()
-    mask[:, 0] = False
-    mask_rolled = mask.roll(-1, 1)
-
-    targets_forward = word_ids[mask]
-    targets_backward = word_ids[mask_rolled]
-    context_forward = elmo_representation[:, :, :args.embedding_dim][mask_rolled]
-    context_backward = elmo_representation[:, :, args.embedding_dim:][mask]
-
-    loss_forward = classifier(context_forward, targets_forward) / targets_forward.size(0)
-    loss_backward = classifier(context_backward, targets_backward) / targets_backward.size(0)
-    loss = 0.5 * loss_forward + 0.5 * loss_backward
-    print(loss)
-    
-    key = torch.tensor([800020])
-
-    loss.backward()
-    elmo.pullParameters()
 
 
 def init_scheduler(dummy, servers):

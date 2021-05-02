@@ -72,7 +72,6 @@ class PSElmo(torch.nn.Module):
         self._lstm_offset = key_offset + len(PSEmbedding.lens(num_tokens, embedding_dim))
         self._initParameters()
 
-        
     def _add_buffer(self, name, tensor):
         self._buffers[name] = tensor
         self._non_persistent_buffers_set.add(name)
@@ -87,7 +86,6 @@ class PSElmo(torch.nn.Module):
                 self._add_buffer(name, accumulator)
                 param.register_hook(self.grad_hook(key, name, self.opt))
 
-                
     def grad_hook(self, key: torch.Tensor, name, optimizer: PSOptimizer) -> torch.Tensor:
         def hook(grad: torch.Tensor) -> torch.Tensor:
             accumulator = dict(self.named_buffers())[name]

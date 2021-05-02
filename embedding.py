@@ -4,7 +4,7 @@ from optimizer import PSOptimizer
 import lapse
 
 
-class PSEmbedding(torch.nn.Module):
+class PSEmbedding(torch.nn.Module): # TODO: 0-embedding not always needed
 
     def lens(num_embeddings, embedding_dim):
         return torch.ones((num_embeddings+1)*2) * embedding_dim
@@ -20,7 +20,7 @@ class PSEmbedding(torch.nn.Module):
         super().__init__()
         self.kv = kv
         self.key_offset = key_offset
-        self.num_embeddings = num_embeddings+1 #+1 for 0 embedding, TODO: check
+        self.num_embeddings = num_embeddings+1 #+1 for 0 embedding
         self.embedding_dim = embedding_dim
         self.opt = opt
         self._initEmbeddings()
@@ -29,7 +29,7 @@ class PSEmbedding(torch.nn.Module):
         keys = torch.LongTensor(range(self.num_embeddings)) + self.key_offset
         values = torch.empty((self.num_embeddings, self.embedding_dim), dtype=torch.float32)
         init.normal_(values)
-        values[0,:] = 0 # TODO: check
+        values[0,:] = 0 # 0 embedding
         ts = self.kv.set(keys, values)
         ts = self.kv.set(keys+self.num_embeddings, torch.full(values.size(), self.opt.initial_accumulator_value))
 
