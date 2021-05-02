@@ -79,10 +79,10 @@ class PSElmo(torch.nn.Module):
     def _initParameters(self):
         for i, (name, param) in enumerate(self.named_parameters()):
             key = torch.tensor([2*i+self._lstm_offset])
-            self.kv.set(key, param.cpu())
+            self.kv.set(key, param)
             if self.opt:
                 accumulator = torch.full(param.size(), self.opt.initial_accumulator_value)
-                self.kv.set(key+1, accumulator.cpu())
+                self.kv.set(key+1, accumulator)
                 self._add_buffer(name, accumulator)
                 param.register_hook(self.grad_hook(key, name, self.opt))
 
@@ -93,7 +93,8 @@ class PSElmo(torch.nn.Module):
             update_parameter, update_accumulator = optimizer.update(grad, accumulator)
             self.kv.push(key, update_parameter.cpu())
             self.kv.push(key+1, update_accumulator.cpu())
-            accumulator += update_accumulator
+            ## TODO update parameters local or pull from ps?
+            ## eg: accumulator += update_accumulator
             return grad
         return hook
         
@@ -101,9 +102,13 @@ class PSElmo(torch.nn.Module):
         with torch.no_grad():
             device = self.scalar_mix.gamma.device
             self.cpu()
+            timestamps = []
             for i, (name, param) in enumerate(self.named_parameters()):
                 key = torch.tensor([2*i+self._lstm_offset])
-                self.kv.pull(key, param)
+                timestamps.append(self.kv.pull(key, param))
+            for ts in timestamps:
+                self.kv.wait(ts)
+            ## TODO: wait for largest ts?
             self.to(device)
 
     def forward(self, inputs: torch.Tensor) -> (torch.Tensor, torch.BoolTensor):

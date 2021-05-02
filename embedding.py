@@ -32,17 +32,16 @@ class PSEmbedding(torch.nn.Module):
         values[0,:] = 0 # TODO: check
         ts = self.kv.set(keys, values)
         ts = self.kv.set(keys+self.num_embeddings, torch.full(values.size(), self.opt.initial_accumulator_value))
-        self.kv.wait(ts)
-        
 
     def forward(self, keys: torch.Tensor, device=None) -> torch.Tensor:
         keys = keys + self.key_offset
         size = keys.size() + (self.embedding_dim,)
         embeddings = torch.empty(size, dtype=torch.float32)
         gradients = torch.empty(size, dtype=torch.float32)
-        ts = self.kv.pull(keys.flatten(), embeddings)
-        ts = self.kv.pull(keys.flatten()+self.num_embeddings, gradients)
-        self.kv.wait(ts)
+        ts1 = self.kv.pull(keys.flatten(), embeddings)
+        ts2 = self.kv.pull(keys.flatten()+self.num_embeddings, gradients)
+        self.kv.wait(ts1)
+        self.kv.wait(ts2)
         embeddings = embeddings.to(device=device)
         gradients = gradients.to(device=device)
         embeddings.requires_grad_()

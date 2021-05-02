@@ -16,7 +16,7 @@ from utils import load_vocab, batch_to_word_ids
 from data import OneBillionWordIterableDataset
 from torch.utils.data import DataLoader
 
-servers = 1
+servers = 2
 num_words = 793469
 
 num_workers_per_server = 1
@@ -34,7 +34,7 @@ args.dataset = "../1-billion-word-benchmark/training/*"
 args.epochs = 2
 args.batch_size = 128
 args.cuda = True
-args.embedding_dim = 256
+args.embedding_dim = 128#256
 args.cell_size = 2048
 args.layers = 2
 args.recurrent_dropout = 0.1
@@ -137,6 +137,7 @@ def train(worker_id, rank, size, kv):
             loss = 0.5 * loss_forward + 0.5 * loss_backward
             loss.backward()
             print('[%6d] loss: %.3f' % (i, loss.item()))
+            kv.barrier(); # synchronize workers
 
 def run(worker_id, rank, size, kv):
     optimizer = PSAdagrad()
