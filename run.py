@@ -15,8 +15,8 @@ from elmo import PSElmo
 from utils import load_vocab, batch_to_word_ids
 from data import OneBillionWordIterableDataset
 from torch.utils.data import DataLoader
+from cli import parse_arguments
 
-servers = 2
 num_words = 793469
 
 num_workers_per_server = 1
@@ -25,26 +25,8 @@ async_ops = True
 localip = '127.0.0.1'
 port = '9091'
 
-class Object(object):
-    pass
 
-args = Object()
-args.vocab = "../vocab.txt"
-args.dataset = "../1-billion-word-benchmark/training/*"
-args.epochs = 2
-args.batch_size = 128
-args.cuda = True
-args.embedding_dim = 128#256
-args.cell_size = 2048
-args.layers = 2
-args.recurrent_dropout = 0.1
-args.dropout = 0.1
-args.samples = 8192
-args.world_size = servers * num_workers_per_server
-args.sync_freq = 1
-
-
-def train(worker_id, rank, size, kv):
+def train(worker_id, rank, args, kv):
     vocab2id = load_vocab(args.vocab)
     num_tokens = len(vocab2id)
     optimizer = PSAdagrad(
@@ -62,7 +44,7 @@ def train(worker_id, rank, size, kv):
         lstm_recurrent_dropout=args.recurrent_dropout,
         dropout=args.dropout,
         opt=optimizer,
-        estimate_parameters=args.sync_freq>1,
+        estimate_parameters=args.sync_time>1,
     )
     classifier = PSSampledSoftmaxLoss(
         kv=kv, 
@@ -87,7 +69,7 @@ def train(worker_id, rank, size, kv):
 
     for epoch in range(args.epochs):
         for i, batch in enumerate(loader):
-            if i % args.sync_freq == 0:
+            if i % args.sync_time == 0:
                 elmo.pullParameters()
             word_ids = batch_to_word_ids(batch[rank::args.world_size], vocab2id)
             elmo_representation, word_mask = elmo(word_ids)
@@ -121,9 +103,9 @@ def init_scheduler(dummy, servers):
     lapse.scheduler(len(lens), num_workers_per_server)
 
 
-def init_server(rank, servers, fn):
+def init_server(rank, args, fn):
     os.environ['DMLC_NUM_WORKER'] = '0'
-    os.environ['DMLC_NUM_SERVER'] = str(servers)
+    os.environ['DMLC_NUM_SERVER'] = str(args.servers)
     os.environ['DMLC_ROLE'] = 'server'
     os.environ['DMLC_PS_ROOT_URI'] = localip
     os.environ['DMLC_PS_ROOT_PORT'] = port
@@ -138,7 +120,7 @@ def init_server(rank, servers, fn):
     for w in range(num_workers_per_server):
         worker_id = rank * num_workers_per_server + w
         kv = lapse.Worker(0, w+1, s)
-        fn(worker_id, rank, servers, kv)
+        fn(worker_id, rank, args, kv)
         del kv
 
     # shutdown server
@@ -154,17 +136,20 @@ def kill_processes(signal_received, frame):
 
 processes = []
 if __name__ == "__main__":
+    args = parse_arguments()
+    print(args)
+
     # catch interrupt (to shut down lapse processes)
     signal(SIGINT, kill_processes)
 
     # launch lapse scheduler
-    p = Process(target=init_scheduler, args=(0, servers))
+    p = Process(target=init_scheduler, args=(0, args.servers))
     p.start()
     processes.append(p)
 
     # launch lapse processes
-    for rank in range(servers):
-        p = Process(target=init_server, args=(rank, servers, train))
+    for rank in range(args.servers):
+        p = Process(target=init_server, args=(rank, args, train))
         p.start()
         processes.append(p)
 
