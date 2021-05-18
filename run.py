@@ -5,7 +5,7 @@ from torch import cuda
 import torch.distributed as dist
 import numpy as np
 from optimizer import PSSGD, PSAdagrad
-from torch.multiprocessing import Process
+import multiprocessing as mp
 import lapse
 from signal import signal, SIGINT
 from sys import exit
@@ -90,9 +90,9 @@ def train(worker_id, rank, args, kv):
             kv.barrier(); # synchronize workers
 
 
-def init_scheduler(dummy, servers):
+def init_scheduler(dummy, args):
     os.environ['DMLC_NUM_WORKER'] = '0'
-    os.environ['DMLC_NUM_SERVER'] = str(servers)
+    os.environ['DMLC_NUM_SERVER'] = str(args.servers)
     os.environ['DMLC_ROLE'] = 'scheduler'
     os.environ['DMLC_PS_ROOT_URI'] = localip
     os.environ['DMLC_PS_ROOT_PORT'] = port
@@ -139,17 +139,22 @@ if __name__ == "__main__":
     args = parse_arguments()
     print(args)
 
+    try:
+        mp.set_start_method('spawn')
+    except RuntimeError:
+        pass
+    
     # catch interrupt (to shut down lapse processes)
     signal(SIGINT, kill_processes)
 
     # launch lapse scheduler
-    p = Process(target=init_scheduler, args=(0, args.servers))
+    p = mp.Process(target=init_scheduler, args=(0, args))
     p.start()
     processes.append(p)
 
     # launch lapse processes
     for rank in range(args.servers):
-        p = Process(target=init_server, args=(rank, args, train))
+        p = mp.Process(target=init_server, args=(rank, args, train))
         p.start()
         processes.append(p)
 
