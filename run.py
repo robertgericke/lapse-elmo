@@ -52,7 +52,7 @@ def train(worker_id, rank, vocab2id, args, kv):
     )
     
     # move model to device
-    if args.cuda:
+    if args.cuda and cuda.is_available():
         device_id = rank % cuda.device_count()
         device = torch.device("cuda:" + str(device_id))
         elmo.to(device)
