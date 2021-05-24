@@ -87,7 +87,7 @@ def train(worker_id, rank, args, kv):
             loss = 0.5 * loss_forward + 0.5 * loss_backward
             loss.backward()
             print('[%6d] loss: %.3f' % (i, loss.item()))
-            kv.barrier(); # synchronize workers
+        kv.barrier(); # synchronize workers
 
 
 def init_scheduler(dummy, args):
