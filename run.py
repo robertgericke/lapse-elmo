@@ -17,8 +17,6 @@ from data import OneBillionWordIterableDataset
 from torch.utils.data import DataLoader
 from cli import parse_arguments
 
-num_words = 793469
-
 num_workers_per_server = 1
 async_ops = True
 
@@ -26,9 +24,7 @@ localip = '127.0.0.1'
 port = '9091'
 
 
-def train(worker_id, rank, args, kv):
-    vocab2id = load_vocab(args.vocab)
-    num_tokens = len(vocab2id)
+def train(worker_id, rank, vocab2id, args, kv):
     optimizer = PSAdagrad(
         lr = 0.2,
         initial_accumulator_value=1.0,
@@ -37,7 +33,7 @@ def train(worker_id, rank, args, kv):
     elmo = PSElmo(
         kv=kv,
         key_offset=0,
-        num_tokens=num_tokens,
+        num_tokens=args.num_tokens,
         embedding_dim=args.embedding_dim,
         num_layers=args.layers,
         lstm_cell_size=args.cell_size,
@@ -48,9 +44,9 @@ def train(worker_id, rank, args, kv):
     )
     classifier = PSSampledSoftmaxLoss(
         kv=kv, 
-        key_offset=len(PSElmo.lens(num_words, args.embedding_dim, args.cell_size, args.layers)),
-        num_embeddings=num_tokens, 
-        embedding_dim=args.embedding_dim, 
+        key_offset=len(PSElmo.lens(args.num_tokens, args.embedding_dim, args.cell_size, args.layers)),
+        num_embeddings=args.num_tokens,
+        embedding_dim=args.embedding_dim,
         num_samples=args.samples,
         opt=optimizer,
     )
@@ -66,7 +62,6 @@ def train(worker_id, rank, args, kv):
     # set up training
     dataset = OneBillionWordIterableDataset(args.dataset)
     loader = DataLoader(dataset, batch_size=args.batch_size * args.world_size, collate_fn=list)
-
     for epoch in range(args.epochs):
         for i, batch in enumerate(loader):
             if i % args.sync_dense == 0:
@@ -96,31 +91,23 @@ def init_scheduler(dummy, args):
     os.environ['DMLC_ROLE'] = 'scheduler'
     os.environ['DMLC_PS_ROOT_URI'] = localip
     os.environ['DMLC_PS_ROOT_PORT'] = port
-
-    lens_elmo = PSElmo.lens(num_words, args.embedding_dim, args.cell_size, args.layers)
-    lens_classifier = PSSampledSoftmaxLoss.lens(num_words, args.embedding_dim)
-    lens = torch.cat((lens_elmo,lens_classifier))
-    lapse.scheduler(len(lens), num_workers_per_server)
+    lapse.scheduler(args.num_parameters, num_workers_per_server)
 
 
-def init_server(rank, args, fn):
+def init_server(rank, lens, vocab2id, args, fn):
     os.environ['DMLC_NUM_WORKER'] = '0'
     os.environ['DMLC_NUM_SERVER'] = str(args.servers)
     os.environ['DMLC_ROLE'] = 'server'
     os.environ['DMLC_PS_ROOT_URI'] = localip
     os.environ['DMLC_PS_ROOT_PORT'] = port
     
-    lens_elmo = PSElmo.lens(num_words, args.embedding_dim, args.cell_size, args.layers)
-    lens_classifier = PSSampledSoftmaxLoss.lens(num_words, args.embedding_dim)
-    lens = torch.cat((lens_elmo,lens_classifier))
-
     lapse.setup(len(lens), num_workers_per_server)
     s = lapse.Server(lens)
 
     for w in range(num_workers_per_server):
         worker_id = rank * num_workers_per_server + w
         kv = lapse.Worker(0, w+1, s)
-        fn(worker_id, rank, args, kv)
+        fn(worker_id, rank, vocab2id, args, kv)
         del kv
 
     # shutdown server
@@ -143,7 +130,15 @@ if __name__ == "__main__":
         mp.set_start_method('spawn')
     except RuntimeError:
         pass
-    
+
+    vocab2id = load_vocab(args.vocab)
+    args.num_tokens = len(vocab2id)
+
+    lens_elmo = PSElmo.lens(args.num_tokens, args.embedding_dim, args.cell_size, args.layers)
+    lens_classifier = PSSampledSoftmaxLoss.lens(args.num_tokens, args.embedding_dim)
+    lens = torch.cat((lens_elmo,lens_classifier))
+    args.num_parameters = len(lens)
+
     # catch interrupt (to shut down lapse processes)
     signal(SIGINT, kill_processes)
 
@@ -154,7 +149,7 @@ if __name__ == "__main__":
 
     # launch lapse processes
     for rank in range(args.servers):
-        p = mp.Process(target=init_server, args=(rank, args, train))
+        p = mp.Process(target=init_server, args=(rank, lens, vocab2id, args, train))
         p.start()
         processes.append(p)
 
