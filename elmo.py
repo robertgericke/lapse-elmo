@@ -100,7 +100,7 @@ class PSElmo(torch.nn.Module):
             return grad
         return hook
         
-    def pullParameters(self):
+    def pullDenseParameters(self):
         with torch.no_grad():
             device = self.scalar_mix.gamma.device
             self.cpu()
@@ -110,7 +110,6 @@ class PSElmo(torch.nn.Module):
                 timestamps.append(self.kv.pull(key, param))
             for ts in timestamps:
                 self.kv.wait(ts)
-            ## TODO: wait for largest ts?
             self.to(device)
 
     def forward(self, inputs: torch.Tensor) -> (torch.Tensor, torch.BoolTensor):

@@ -21,7 +21,7 @@ def parse_arguments():
     # distribution options
     distribution = parser.add_argument_group('distribution')
     distribution.add_argument('-ps', '--servers', default=1, type=int, help='number of servers')
-    distribution.add_argument('-sf', '--sync_time', default=1, type=int, help='sync lstm parameters every n gradient steps')
+    distribution.add_argument('-sd', '--sync_dense', default=1, type=int, help='synchronize dense model parameters every n steps')
     args = parser.parse_args()
     args.world_size = args.servers
     return args

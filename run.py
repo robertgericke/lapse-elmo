@@ -44,7 +44,7 @@ def train(worker_id, rank, args, kv):
         lstm_recurrent_dropout=args.recurrent_dropout,
         dropout=args.dropout,
         opt=optimizer,
-        estimate_parameters=args.sync_time>1,
+        estimate_parameters=args.sync_dense>1,
     )
     classifier = PSSampledSoftmaxLoss(
         kv=kv, 
@@ -69,8 +69,8 @@ def train(worker_id, rank, args, kv):
 
     for epoch in range(args.epochs):
         for i, batch in enumerate(loader):
-            if i % args.sync_time == 0:
-                elmo.pullParameters()
+            if i % args.sync_dense == 0:
+                elmo.pullDenseParameters()
             word_ids = batch_to_word_ids(batch[rank::args.world_size], vocab2id)
             elmo_representation, word_mask = elmo(word_ids)
             mask = word_mask.clone()
