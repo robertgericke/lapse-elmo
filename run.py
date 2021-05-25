@@ -124,7 +124,6 @@ def kill_processes(signal_received, frame):
 processes = []
 if __name__ == "__main__":
     args = parse_arguments()
-    print(args)
 
     try:
         mp.set_start_method('spawn')
@@ -138,6 +137,8 @@ if __name__ == "__main__":
     lens_classifier = PSSampledSoftmaxLoss.lens(args.num_tokens, args.embedding_dim)
     lens = torch.cat((lens_elmo,lens_classifier))
     args.num_parameters = len(lens)
+
+    print(args)
 
     # catch interrupt (to shut down lapse processes)
     signal(SIGINT, kill_processes)
