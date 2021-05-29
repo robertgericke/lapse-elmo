@@ -105,9 +105,12 @@ class PSElmo(torch.nn.Module):
             device = self.scalar_mix.gamma.device
             self.cpu()
             timestamps = []
+            accumulators = dict(self.named_buffers())
             for i, (name, param) in enumerate(self.named_parameters()):
                 key = torch.tensor([2*i+self._lstm_offset])
                 timestamps.append(self.kv.pull(key, param))
+                key += 1
+                timestamps.append(self.kv.pull(key, accumulators[name]))
             for ts in timestamps:
                 self.kv.wait(ts)
             self.to(device)
