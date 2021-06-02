@@ -23,6 +23,7 @@ class WordIterableDataset(IterableDataset):
         self.filename = filename
 
     def __iter__(self):
+        print(self.filename)
         with open(self.filename) as file:
             for line in file:
                 yield line.strip().split()

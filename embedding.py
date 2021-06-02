@@ -2,6 +2,7 @@ import torch
 from torch.nn import init
 from optimizer import PSOptimizer
 import lapse
+from counter import AccessCounter
 
 
 class PSEmbedding(torch.nn.Module): # TODO: 0-embedding not always needed
@@ -12,6 +13,7 @@ class PSEmbedding(torch.nn.Module): # TODO: 0-embedding not always needed
     def __init__(
         self,
         kv: lapse.Worker,
+        counter: AccessCounter,
         key_offset: int = 0,
         num_embeddings: int = 1024,
         embedding_dim: int = 512,
@@ -23,7 +25,8 @@ class PSEmbedding(torch.nn.Module): # TODO: 0-embedding not always needed
         self.num_embeddings = num_embeddings+1 #+1 for 0 embedding
         self.embedding_dim = embedding_dim
         self.opt = opt
-        self._initEmbeddings()
+        self.counter = counter
+        #self._initEmbeddings()
     
     def _initEmbeddings(self):
         keys = torch.LongTensor(range(self.num_embeddings)) + self.key_offset
@@ -35,19 +38,23 @@ class PSEmbedding(torch.nn.Module): # TODO: 0-embedding not always needed
 
     def forward(self, keys: torch.Tensor, device=None) -> torch.Tensor:
         keys = keys + self.key_offset
-        size = keys.size() + (self.embedding_dim,)
-        embeddings = torch.empty(size, dtype=torch.float32)
-        accumulators = torch.empty(size, dtype=torch.float32)
-        ts1 = self.kv.pull(keys.flatten(), embeddings)
-        ts2 = self.kv.pull(keys.flatten()+self.num_embeddings, accumulators)
-        self.kv.wait(ts1)
-        self.kv.wait(ts2)
-        embeddings = embeddings.to(device=device)
-        accumulators = accumulators.to(device=device)
-        embeddings.requires_grad_()
-        if self.opt:
-            embeddings.register_hook(self.grad_hook(keys, accumulators, self.opt))
-        return embeddings
+        self.counter.count(keys)
+        self.counter.count(keys+self.num_embeddings)
+        return None
+        #keys = keys + self.key_offset
+        #size = keys.size() + (self.embedding_dim,)
+        #embeddings = torch.empty(size, dtype=torch.float32)
+        #accumulators = torch.empty(size, dtype=torch.float32)
+        #ts1 = self.kv.pull(keys.flatten(), embeddings)
+        #ts2 = self.kv.pull(keys.flatten()+self.num_embeddings, accumulators)
+        #self.kv.wait(ts1)
+        #self.kv.wait(ts2)
+        #embeddings = embeddings.to(device=device)
+        #accumulators = accumulators.to(device=device)
+        #embeddings.requires_grad_()
+        #if self.opt:
+        #    embeddings.register_hook(self.grad_hook(keys, accumulators, self.opt))
+        #return embeddings
         
     def grad_hook(self, keys: torch.Tensor, accumulators:torch.Tensor, optimizer: PSOptimizer) -> torch.Tensor:
         def hook(grad: torch.Tensor) -> torch.Tensor:

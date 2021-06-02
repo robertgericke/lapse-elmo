@@ -6,6 +6,7 @@ import torch
 from torch.nn import Dropout
 from typing import List
 import lapse
+from counter import AccessCounter
 
 
 class PSElmo(torch.nn.Module):
@@ -26,6 +27,7 @@ class PSElmo(torch.nn.Module):
     def __init__(
         self,
         kv: lapse.Worker,
+        counter: AccessCounter,
         num_tokens: int,
         key_offset: int = 0,
         embedding_dim: int = 512,
@@ -50,6 +52,7 @@ class PSElmo(torch.nn.Module):
             num_embeddings=num_tokens, 
             embedding_dim=embedding_dim,
             opt=opt,
+            counter=counter
         )
         self.elmo_lstm = ElmoLstm(
             input_size=embedding_dim,
@@ -70,7 +73,8 @@ class PSElmo(torch.nn.Module):
         self.dropout = Dropout(p=dropout)
         self.estimate_parameters = estimate_parameters
         self._lstm_offset = key_offset + len(PSEmbedding.lens(num_tokens, embedding_dim))
-        self._initParameters()
+        self.counter = counter
+        #self._initParameters()
 
     def _add_buffer(self, name, tensor):
         self._buffers[name] = tensor
@@ -102,26 +106,29 @@ class PSElmo(torch.nn.Module):
         
     def pullDenseParameters(self):
         with torch.no_grad():
-            device = self.scalar_mix.gamma.device
-            self.cpu()
-            timestamps = []
-            accumulators = dict(self.named_buffers())
+            #device = self.scalar_mix.gamma.device
+            #self.cpu()
+            #timestamps = []
+            #accumulators = dict(self.named_buffers())
             for i, (name, param) in enumerate(self.named_parameters()):
                 key = torch.tensor([2*i+self._lstm_offset])
-                timestamps.append(self.kv.pull(key, param))
+                #timestamps.append(self.kv.pull(key, param))
+                self.counter.count(key)
                 key += 1
-                timestamps.append(self.kv.pull(key, accumulators[name]))
-            for ts in timestamps:
-                self.kv.wait(ts)
-            self.to(device)
+                #timestamps.append(self.kv.pull(key, accumulators[name]))
+                self.counter.count(key)
+            #for ts in timestamps:
+            #    self.kv.wait(ts)
+            #self.to(device)
 
     def forward(self, inputs: torch.Tensor) -> (torch.Tensor, torch.BoolTensor):
-        device = self.scalar_mix.gamma.device
-        embedded = self.word_embedding(inputs, device)
-        mask = (inputs > 0).to(device)
-        lstm_out = self.elmo_lstm(embedded, mask)
-        layer_outputs = [torch.cat([embedded, embedded], dim=-1) * mask.unsqueeze(-1)]
-        for layer_activations in torch.chunk(lstm_out, lstm_out.size(0), dim=0):
-            layer_outputs.append(layer_activations.squeeze(0))
-        elmo_representation = self.scalar_mix(layer_outputs, mask)
-        return self.dropout(elmo_representation), mask
+        #device = self.scalar_mix.gamma.device
+        embedded = self.word_embedding(inputs)#,device)
+        mask = (inputs > 0)#.to(device)
+        return None, mask
+        #lstm_out = self.elmo_lstm(embedded, mask)
+        #layer_outputs = [torch.cat([embedded, embedded], dim=-1) * mask.unsqueeze(-1)]
+        #for layer_activations in torch.chunk(lstm_out, lstm_out.size(0), dim=0):
+        #    layer_outputs.append(layer_activations.squeeze(0))
+        #elmo_representation = self.scalar_mix(layer_outputs, mask)
+        #return self.dropout(elmo_representation), mask

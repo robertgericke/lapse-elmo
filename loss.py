@@ -5,6 +5,7 @@ from optimizer import PSOptimizer
 import torch
 import lapse
 import numpy as np
+from counter import AccessCounter
 
 # based on allennlp.modules.sampled_softmax_loss
 # see: https://github.com/allenai/allennlp/blob/main/allennlp/modules/sampled_softmax_loss.py
@@ -16,6 +17,7 @@ class PSSampledSoftmaxLoss(torch.nn.Module):
     def __init__(
         self,
         kv: lapse.Worker,
+        counter: AccessCounter,
         key_offset: int = 0,
         num_embeddings: int = 1024,
         embedding_dim: int = 512,
@@ -32,11 +34,13 @@ class PSSampledSoftmaxLoss(torch.nn.Module):
             num_embeddings=num_embeddings, 
             embedding_dim=embedding_dim+1, 
             opt=opt,
+            counter=counter
         )
+        self.counter = counter
 
     def forward(self, embeddings: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
-        if embeddings.shape[0] == 0: # empty batch
-            return torch.tensor(0.0, device=embeddings.device)
+        #if embeddings.shape[0] == 0: # empty batch
+        #    return torch.tensor(0.0, device=embeddings.device)
 
         if not self.training:
             return self._forward_eval(embeddings, targets)
@@ -44,7 +48,7 @@ class PSSampledSoftmaxLoss(torch.nn.Module):
             return self._forward_train(embeddings, targets)
 
     def _forward_train(self, embeddings: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
-        sampled_ids, target_expected_count, sampled_expected_count = self.log_uniform_candidate_sampler(targets.to(embeddings.device))
+        sampled_ids, target_expected_count, sampled_expected_count = self.log_uniform_candidate_sampler(targets)
 
         long_targets = targets.long()
         long_targets.requires_grad_(False)
@@ -52,7 +56,8 @@ class PSSampledSoftmaxLoss(torch.nn.Module):
         # Get the softmax weights (so we can compute logits)
         # shape (batch_size * max_sequence_length + num_samples)
         all_ids = torch.cat([long_targets, sampled_ids.cpu()], dim=0)
-        all_e = self.embedding(all_ids, embeddings.device)
+        all_e = self.embedding(all_ids)#, embeddings.device)
+        return None
         all_w = all_e[:,1:]
         all_b = all_e[:,:1].flatten()
 

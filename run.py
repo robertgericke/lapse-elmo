@@ -16,6 +16,7 @@ from utils import load_vocab, batch_to_word_ids
 from data import OneBillionWordIterableDataset
 from torch.utils.data import DataLoader
 from cli import parse_arguments
+from counter import AccessCounter
 
 num_workers_per_server = 1
 async_ops = True
@@ -25,6 +26,7 @@ port = '9091'
 
 
 def train(worker_id, rank, vocab2id, args, kv):
+    counter = AccessCounter(args)
     optimizer = PSAdagrad(
         lr = 0.2,
         initial_accumulator_value=1.0,
@@ -41,6 +43,7 @@ def train(worker_id, rank, vocab2id, args, kv):
         dropout=args.dropout,
         opt=optimizer,
         estimate_parameters=args.sync_dense>1,
+        counter=counter
     )
     classifier = PSSampledSoftmaxLoss(
         kv=kv, 
@@ -49,6 +52,7 @@ def train(worker_id, rank, vocab2id, args, kv):
         embedding_dim=args.embedding_dim,
         num_samples=args.samples,
         opt=optimizer,
+        counter=counter
     )
     
     # move model to device
@@ -74,16 +78,20 @@ def train(worker_id, rank, vocab2id, args, kv):
 
             targets_forward = word_ids[mask]
             targets_backward = word_ids[mask_rolled]
-            context_forward = elmo_representation[:, :, :args.embedding_dim][mask_rolled]
-            context_backward = elmo_representation[:, :, args.embedding_dim:][mask]
+            #context_forward = elmo_representation[:, :, :args.embedding_dim][mask_rolled]
+            #context_backward = elmo_representation[:, :, args.embedding_dim:][mask]
 
-            loss_forward = classifier(context_forward, targets_forward) / targets_forward.size(0)
-            loss_backward = classifier(context_backward, targets_backward) / targets_backward.size(0)
-            loss = 0.5 * loss_forward + 0.5 * loss_backward
-            loss.backward()
-            print('[%6d] loss: %.3f' % (i, loss.item()))
+            #loss_forward = classifier(context_forward, targets_forward) / targets_forward.size(0)
+            #loss_backward = classifier(context_backward, targets_backward) / targets_backward.size(0)
+            #loss = 0.5 * loss_forward + 0.5 * loss_backward
+            #loss.backward()
+            #print('[%6d] loss: %.3f' % (i, loss.item()))
+            loss_forward = classifier(None, targets_forward)
+            loss_backward = classifier(None, targets_backward)
+            if i % 1000 == 0:
+                print('[%6d]' % (i))
         kv.barrier(); # synchronize workers
-
+    counter.save("access.txt")
 
 def init_scheduler(dummy, args):
     os.environ['DMLC_NUM_WORKER'] = '0'
@@ -137,6 +145,12 @@ if __name__ == "__main__":
     lens_classifier = PSSampledSoftmaxLoss.lens(args.num_tokens, args.embedding_dim)
     lens = torch.cat((lens_elmo,lens_classifier))
     args.num_parameters = len(lens)
+    
+    with open("lens.txt", 'w') as out:
+        for key in lens.numpy():
+            if key % 100000 == 0:
+                print(key)
+            out.write(str(int(key)) + "\n")
 
     print(args)
 
