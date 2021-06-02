@@ -10,7 +10,7 @@ class AccessCounter:
 
 
     def count(self, keys):
-        for key in keys.flatten().numpy():
+        for key in set(keys.flatten().numpy()):
             self.counts[int(key)] += 1
     
     
