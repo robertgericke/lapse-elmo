@@ -84,7 +84,7 @@ def train(worker_id, rank, vocab2id, args, kv):
             #context_backward = elmo_representation[:, :, args.embedding_dim:][mask]
             #context = torch.cat((context_forward, context_backward))
 
-            loss = classifier(None, targets) / targets.size(0)
+            loss = classifier(None, targets) #/ targets.size(0)
             #loss.backward()
             if i % 1000 == 0:
                 print('[%6d]' % (i))
