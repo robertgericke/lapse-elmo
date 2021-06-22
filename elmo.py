@@ -11,17 +11,20 @@ from counter import AccessCounter
 
 class PSElmo(torch.nn.Module):
 
-    def _lens_lstm(num_embeddings, embedding_dim, lstm_cell_size, num_layers):
+    def _lens_lstm(embedding_dim, lstm_cell_size, num_layers):
         layer = [4*lstm_cell_size*embedding_dim, 4*lstm_cell_size*embedding_dim, 4*lstm_cell_size*embedding_dim, 4*lstm_cell_size*embedding_dim, 4*lstm_cell_size, 4*lstm_cell_size, embedding_dim*lstm_cell_size, embedding_dim*lstm_cell_size]
         return torch.tensor(layer*2*num_layers)
 
-    def _lens_scalar_mix(num_embeddings, embedding_dim, lstm_cell_size, num_layers):
+    def _lens_scalar_mix(num_layers):
         return torch.tensor([1]*(num_layers+1+1)*2)
 
-    def lens(num_embeddings, embedding_dim, lstm_cell_size, num_layers):
-        lens_embedding = PSEmbedding.lens(num_embeddings, embedding_dim)
-        lens_lstm = PSElmo._lens_lstm(num_embeddings, embedding_dim, lstm_cell_size, num_layers)
-        lens_scalar_mix = PSElmo._lens_scalar_mix(num_embeddings, embedding_dim, lstm_cell_size, num_layers)
+    def _lens_embedding(num_tokens, embedding_dim):
+        return PSEmbedding.lens(num_tokens+1, embedding_dim)
+
+    def lens(num_tokens, embedding_dim, lstm_cell_size, num_layers):
+        lens_embedding = PSElmo._lens_embedding(num_tokens, embedding_dim)
+        lens_lstm = PSElmo._lens_lstm(embedding_dim, lstm_cell_size, num_layers)
+        lens_scalar_mix = PSElmo._lens_scalar_mix(num_layers)
         return torch.cat((lens_embedding, lens_lstm, lens_scalar_mix))
 
     def __init__(
@@ -49,7 +52,7 @@ class PSElmo(torch.nn.Module):
         self.word_embedding = PSEmbedding(
             kv=kv,
             key_offset=key_offset,
-            num_embeddings=num_tokens, 
+            num_embeddings=num_tokens+1, 
             embedding_dim=embedding_dim,
             opt=opt,
             counter=counter
@@ -72,14 +75,14 @@ class PSElmo(torch.nn.Module):
         )
         self.dropout = Dropout(p=dropout)
         self.estimate_parameters = estimate_parameters
-        self._lstm_offset = key_offset + len(PSEmbedding.lens(num_tokens, embedding_dim))
+        self._lstm_offset = key_offset + len(PSEmbedding.lens(num_tokens+1, embedding_dim))
         self.counter = counter
         #self._initParameters()
 
     def _add_buffer(self, name, tensor):
         self._buffers[name] = tensor
         self._non_persistent_buffers_set.add(name)
-    
+
     def _initParameters(self):
         for i, (name, param) in enumerate(self.named_parameters()):
             key = torch.tensor([2*i+self._lstm_offset])
@@ -103,7 +106,7 @@ class PSElmo(torch.nn.Module):
                     param += update_parameter
             return grad
         return hook
-        
+
     def pullDenseParameters(self):
         with torch.no_grad():
             #device = self.scalar_mix.gamma.device

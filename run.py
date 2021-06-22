@@ -78,16 +78,14 @@ def train(worker_id, rank, vocab2id, args, kv):
 
             targets_forward = word_ids[mask]
             targets_backward = word_ids[mask_rolled]
+            targets = torch.cat((targets_forward, targets_backward))
+            targets -= 1 # offset 1-based token ids to 0-based sampling ids
             #context_forward = elmo_representation[:, :, :args.embedding_dim][mask_rolled]
             #context_backward = elmo_representation[:, :, args.embedding_dim:][mask]
+            #context = torch.cat((context_forward, context_backward))
 
-            #loss_forward = classifier(context_forward, targets_forward) / targets_forward.size(0)
-            #loss_backward = classifier(context_backward, targets_backward) / targets_backward.size(0)
-            #loss = 0.5 * loss_forward + 0.5 * loss_backward
+            loss = classifier(None, targets) / targets.size(0)
             #loss.backward()
-            #print('[%6d] loss: %.3f' % (i, loss.item()))
-            loss_forward = classifier(None, targets_forward)
-            loss_backward = classifier(None, targets_backward)
             if i % 1000 == 0:
                 print('[%6d]' % (i))
         kv.barrier(); # synchronize workers
