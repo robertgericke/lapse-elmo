@@ -21,9 +21,9 @@ plt.savefig('sort_log.png')
 plt.clf()
 
 points = data[0:793470]
-sampled = data[1586981:2380450]
+sampled = data[1586981:2380449]
 plt.plot(points)
-plt.plot(sampled / 2)
+plt.plot(sampled)
 plt.savefig('word_distribution.png')
 plt.yscale('log')
 plt.savefig('word_distribution_log.png')
