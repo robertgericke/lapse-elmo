@@ -45,8 +45,6 @@ class PSSampledSoftmaxLoss(torch.nn.Module):
 
     def _forward_train(self, embeddings: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
         sampled_ids, target_expected_count, sampled_expected_count = self.log_uniform_candidate_sampler(targets.to(embeddings.device))
-        
-        sampled_ids += 1 # offset for 1-based index
 
         long_targets = targets.long()
         long_targets.requires_grad_(False)
