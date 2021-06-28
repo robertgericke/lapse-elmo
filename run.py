@@ -66,7 +66,7 @@ def train(worker_id, rank, vocab2id, args, kv):
         for i, batch in enumerate(loader):
             if i % args.sync_dense == 0:
                 elmo.pullDenseParameters()
-            word_ids = batch_to_word_ids(batch[rank::args.world_size], vocab2id)
+            word_ids = batch_to_word_ids(batch[rank::args.world_size], vocab2id, args.max_sequence_length)
             elmo_representation, word_mask = elmo(word_ids)
             mask = word_mask.clone()
             mask[:, 0] = False

@@ -18,6 +18,7 @@ def parse_arguments():
     elmo.add_argument('-l', '--layers', default=2, type=int, help='number of lstm layers')
     elmo.add_argument('-rd', '--recurrent_dropout', default=0.1, type=float, help='recurrent dropout for each lstm')
     elmo.add_argument('-fd', '--dropout', default=0.1, type=float, help='final dropout for elmo representations')
+    elmo.add_argument('-sl', '--max_sequence_length', default=400, type=int, help='maximum sequence length (clipped above)')
     # distribution options
     distribution = parser.add_argument_group('distribution')
     distribution.add_argument('-ps', '--servers', default=1, type=int, help='number of servers')

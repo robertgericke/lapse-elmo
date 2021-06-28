@@ -14,12 +14,14 @@ def load_vocab(filename: str) -> Dict[str, int]:
     return vocab
 
 
-def batch_to_word_ids(batch: List[List[str]], vocab: Dict[str, int], dtype=torch.long, device=None) -> torch.Tensor:
-    max_len = max(len(sentence) for sentence in batch)
+def batch_to_word_ids(batch: List[List[str]], vocab: Dict[str, int], max_sequence_length:int=200, dtype=torch.long, device=None) -> torch.Tensor:
+    max_len = max(min(len(sentence), max_sequence_length) for sentence in batch)
 
     rows = []
     for sentence in batch:
         row = [vocab.get(word, 1) for word in sentence]
+        if len(row) > max_sequence_length:
+            row = row[:max_sequence_length]
         row.extend([0] * (max_len - len(row)))
         rows.append(row)
 
