@@ -8,6 +8,7 @@ In contrast to previous ELMo implementations, the model uses a direct embedding 
 The model is implemented in the [PyTorch](https://pytorch.org/) framework and uses multiple ELMo related modules of the [AllenNLP](https://allennlp.org/) library. Install both via the following commands:
 ```bash
 pip3 install torch torchvision torchaudio
+pip3 install numpy spacy  # allennlp requirements
 pip3 install allennlp
 ```
 
