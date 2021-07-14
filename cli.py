@@ -21,10 +21,15 @@ def parse_arguments():
     elmo.add_argument('-sl', '--max_sequence_length', default=400, type=int, help='maximum sequence length (clipped above)')
     # distribution options
     distribution = parser.add_argument_group('distribution')
-    distribution.add_argument('-ps', '--servers', default=1, type=int, help='number of servers')
+    distribution.add_argument('-r', '--role', default='scheduler', type=str, help='scheduler or server')
+    distribution.add_argument('-ru', '--root_uri', default='127.0.0.1', type=str, help='adress of the scheduler node')
+    distribution.add_argument('-rp', '--root_port', default='9091', type=str, help='port of the scheduler node')
+    distribution.add_argument('-ps', '--servers', default=1, type=int, help='number of local serve instances to create')
+    distribution.add_argument('-ws', '--world_size', default=0, type=int, help='total number of server instances')
     distribution.add_argument('-sd', '--sync_dense', default=1, type=int, help='synchronize dense model parameters every n steps')
     args = parser.parse_args()
-    args.world_size = args.servers
+    if args.world_size == 0:
+        args.world_size = args.servers
     return args
 
 

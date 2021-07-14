@@ -18,10 +18,10 @@ from torch.utils.data import DataLoader
 from cli import parse_arguments
 
 num_workers_per_server = 1
-async_ops = True
+#async_ops = True
 
-localip = '127.0.0.1'
-port = '9091'
+#localip = '127.0.0.1'
+#port = '9091'
 
 
 def train(worker_id, rank, vocab2id, args, kv):
@@ -88,19 +88,19 @@ def train(worker_id, rank, vocab2id, args, kv):
 
 def init_scheduler(dummy, args):
     os.environ['DMLC_NUM_WORKER'] = '0'
-    os.environ['DMLC_NUM_SERVER'] = str(args.servers)
+    os.environ['DMLC_NUM_SERVER'] = str(args.world_size)
     os.environ['DMLC_ROLE'] = 'scheduler'
-    os.environ['DMLC_PS_ROOT_URI'] = localip
-    os.environ['DMLC_PS_ROOT_PORT'] = port
+    os.environ['DMLC_PS_ROOT_URI'] = args.root_uri
+    os.environ['DMLC_PS_ROOT_PORT'] = args.root_port
     lapse.scheduler(args.num_parameters, num_workers_per_server)
 
 
 def init_server(rank, lens, vocab2id, args, fn):
     os.environ['DMLC_NUM_WORKER'] = '0'
-    os.environ['DMLC_NUM_SERVER'] = str(args.servers)
+    os.environ['DMLC_NUM_SERVER'] = str(args.world_size)
     os.environ['DMLC_ROLE'] = 'server'
-    os.environ['DMLC_PS_ROOT_URI'] = localip
-    os.environ['DMLC_PS_ROOT_PORT'] = port
+    os.environ['DMLC_PS_ROOT_URI'] = args.root_uri
+    os.environ['DMLC_PS_ROOT_PORT'] = args.root_port
     
     lapse.setup(len(lens), num_workers_per_server)
     s = lapse.Server(lens)
@@ -144,10 +144,11 @@ if __name__ == "__main__":
     # catch interrupt (to shut down lapse processes)
     signal(SIGINT, kill_processes)
 
-    # launch lapse scheduler
-    p = mp.Process(target=init_scheduler, args=(0, args))
-    p.start()
-    processes.append(p)
+    if args.role == 'scheduler':
+        # launch lapse scheduler
+        p = mp.Process(target=init_scheduler, args=(0, args))
+        p.start()
+        processes.append(p)
 
     # launch lapse processes
     for rank in range(args.servers):
