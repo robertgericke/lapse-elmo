@@ -59,11 +59,12 @@ def train(worker_id, rank, vocab2id, args, kv):
         classifier.to(device)
         print(device)
 
-    # set up training
-    dataset = OneBillionWordIterableDataset(args.dataset)
-    loader = DataLoader(dataset, batch_size=args.batch_size * args.world_size, collate_fn=list)
+
     for epoch in range(args.epochs):
-        for i, batch in enumerate(loader):
+        # set up training data
+        train_dataset = OneBillionWordIterableDataset(args.dataset)
+        train_loader = DataLoader(train_dataset, batch_size=args.batch_size * args.world_size, collate_fn=list)    
+        for i, batch in enumerate(train_loader):
             if i % args.sync_dense == 0:
                 elmo.pullDenseParameters()
             word_ids = batch_to_word_ids(batch[rank::args.world_size], vocab2id, args.max_sequence_length)
@@ -83,6 +84,36 @@ def train(worker_id, rank, vocab2id, args, kv):
             loss = classifier(context, targets) / targets.size(0)
             loss.backward()
             print('[%6d] loss: %.3f' % (i, loss.item()))
+            if i == 10:
+                break;
+
+        if args.testset:
+            kv.barrier(); # synchronize workers
+            elmo.pullDenseParameters()
+            elmo.eval()
+            classifier.eval()
+            with torch.no_grad():
+                test_dataset = OneBillionWordIterableDataset(args.testset)
+                test_loader = DataLoader(test_dataset, batch_size=1*args.world_size, collate_fn=list) 
+                for i, batch in enumerate(test_loader):
+                    word_ids = batch_to_word_ids(batch[rank::args.world_size], vocab2id, args.max_sequence_length)
+                    elmo_representation, word_mask = elmo(word_ids)
+                    mask = word_mask.clone()
+                    mask[:, 0] = False
+                    mask_rolled = mask.roll(-1, 1)
+
+                    targets_forward = word_ids[mask]
+                    targets_backward = word_ids[mask_rolled]
+                    targets = torch.cat((targets_forward, targets_backward))
+                    targets -= 1 # offset 1-based token ids to 0-based sampling ids
+                    context_forward = elmo_representation[:, :, :args.embedding_dim][mask_rolled]
+                    context_backward = elmo_representation[:, :, args.embedding_dim:][mask]
+                    context = torch.cat((context_forward, context_backward))
+
+                    loss = classifier(context, targets) / targets.size(0)
+                    print('[%6d] loss: %.3f' % (i, loss.item()))
+            elmo.train()
+            classifier.train()
         kv.barrier(); # synchronize workers
 
 

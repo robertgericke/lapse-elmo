@@ -5,6 +5,7 @@ def parse_arguments():
     parser = ArgumentParser()
     parser.add_argument('dataset', type=str, help='dataset directory')
     parser.add_argument('vocab', type=str, help='vocabulary file')
+    parser.add_argument('-ts', '--testset', type=str, help='directory of testdata')
     # training options
     training = parser.add_argument_group('training')
     training.add_argument('-e', '--epochs', default=2, type=int, help='number of epochs to run')
