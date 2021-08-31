@@ -59,7 +59,6 @@ def train(worker_id, rank, vocab2id, args, kv):
         classifier.to(device)
         print(device)
 
-
     for epoch in range(args.epochs):
         # set up training data
         train_dataset = OneBillionWordIterableDataset(args.dataset)
@@ -84,14 +83,17 @@ def train(worker_id, rank, vocab2id, args, kv):
             loss = classifier(context, targets) / targets.size(0)
             loss.backward()
             print('[%6d] loss: %.3f' % (i, loss.item()))
-            if i == 10:
-                break;
 
+        kv.barrier() # synchronize workers
         if args.testset:
-            kv.barrier(); # synchronize workers
+            loss_key = torch.tensor([args.num_parameters-1])
+            loss_val = torch.zeros((1), dtype=torch.float32)
+            kv.set(loss_key, loss_val)
             elmo.pullDenseParameters()
             elmo.eval()
             classifier.eval()
+            acc_loss = 0
+            num_loss = 0
             with torch.no_grad():
                 test_dataset = OneBillionWordIterableDataset(args.testset)
                 test_loader = DataLoader(test_dataset, batch_size=1*args.world_size, collate_fn=list) 
@@ -111,10 +113,18 @@ def train(worker_id, rank, vocab2id, args, kv):
                     context = torch.cat((context_forward, context_backward))
 
                     loss = classifier(context, targets) / targets.size(0)
+                    acc_loss = acc_loss + loss
+                    num_loss = num_loss + 1
                     print('[%6d] loss: %.3f' % (i, loss.item()))
+
             elmo.train()
             classifier.train()
-        kv.barrier(); # synchronize workers
+            kv.barrier()
+            loss_part = acc_loss / (num_loss * args.world_size)
+            kv.push(loss_key, loss_part.cpu())
+            kv.barrier() # synchronize workers
+            kv.pull(loss_key, loss_val)
+            print('avg loss: %.3f' % (loss_val).item())
 
 
 def init_scheduler(dummy, args):
@@ -167,7 +177,7 @@ if __name__ == "__main__":
 
     lens_elmo = PSElmo.lens(args.num_tokens, args.embedding_dim, args.cell_size, args.layers)
     lens_classifier = PSSampledSoftmaxLoss.lens(args.num_tokens, args.embedding_dim)
-    lens = torch.cat((lens_elmo,lens_classifier))
+    lens = torch.cat((lens_elmo,lens_classifier,torch.ones(1)))
     args.num_parameters = len(lens)
 
     print(args)
