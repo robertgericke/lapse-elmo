@@ -145,6 +145,12 @@ def init_server(rank, lens, vocab2id, args, fn):
     
     lapse.setup(len(lens), num_workers_per_server)
     s = lapse.Server(lens)
+    try:
+        rank = s.rank()
+    except:
+        print("failed to fetch rank, using default instead")
+
+    print(f"started server with rank {rank}")
 
     for w in range(num_workers_per_server):
         worker_id = rank * num_workers_per_server + w
