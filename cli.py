@@ -11,7 +11,6 @@ def parse_arguments():
     training.add_argument('-e', '--epochs', default=2, type=int, help='number of epochs to run')
     training.add_argument('-b', '--batch_size', default=128, type=int, help='number of sentences per batch')
     training.add_argument('-s', '--samples', default=8192, type=int, help='number of samples for softmax loss')
-    training.add_argument('--no_cuda', default=cuda.is_available(), dest='cuda', action='store_false', help='disable CUDA training')
     # elmo options
     elmo = parser.add_argument_group('elmo')
     elmo.add_argument('-ed', '--embedding_dim', default=128, type=int, help='dimension of the word embeddings')
@@ -27,9 +26,13 @@ def parse_arguments():
     distribution.add_argument('-rp', '--root_port', default='9091', type=str, help='port of the scheduler node')
     distribution.add_argument('-nn', '--nodes', default=1, type=int, help='number of local server instances to create')
     distribution.add_argument('-nw', '--workers_per_node', default=1, type=int, help='number of worker threads per node')
-    #distribution.add_argument('-ps', '--servers', default=1, type=int, help='number of local serve instances to create')
     distribution.add_argument('-ws', '--world_size', default=0, type=int, help='total number of server instances')
     distribution.add_argument('-sd', '--sync_dense', default=1, type=int, help='synchronize dense model parameters every n steps')
+    # cuda options
+    cudaoptions = parser.add_argument_group('cuda')
+    training.add_argument('--no_cuda', default=cuda.is_available(), dest='cuda', action='store_false', help='disable CUDA training')
+    cudaoptions.add_argument('-di', '--device_ids', nargs='+', type=int, help='IDs of cuda devices for each worker')
+
     args = parser.parse_args()
     if args.world_size == 0:
         args.world_size = args.nodes

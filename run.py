@@ -19,8 +19,8 @@ from torch.utils.data import DataLoader
 from cli import parse_arguments
 
 
-def train(worker_id, rank, vocab2id, args, kv):
-    print(f"started worker with id {worker_id}")
+def train(worker_id, rank, device, vocab2id, args, kv):
+    print(f"Worker {worker_id} training on {device}")
     optimizer = PSAdagrad(
         lr = 0.2,
         initial_accumulator_value=1.0,
@@ -48,12 +48,8 @@ def train(worker_id, rank, vocab2id, args, kv):
     )
     
     # move model to device
-    if args.cuda and cuda.is_available():
-        device_id = rank % cuda.device_count()
-        device = torch.device("cuda:" + str(device_id))
-        elmo.to(device)
-        classifier.to(device)
-        print(device)
+    elmo.to(device)
+    classifier.to(device)
 
     for epoch in range(args.epochs):
         # set up training data
@@ -152,7 +148,16 @@ def init_node(local_rank, lens, vocab2id, args, fn):
     for w in range(args.workers_per_node):
         worker_id = rank * args.workers_per_node + w
         kv = lapse.Worker(0, w+1, s)
-        t = threading.Thread(target=fn, args=(worker_id, rank, vocab2id, args, kv))
+        device = torch.device("cpu")
+        if args.cuda and cuda.is_available():
+            local_worker_id = local_rank * args.workers_per_node + w
+            if args.device_ids is None:
+                device_id = local_worker_id % cuda.device_count()
+            else:
+                device_id = args.device_ids[local_worker_id]
+            device = torch.device("cuda:" + str(device_id))
+
+        t = threading.Thread(target=fn, args=(worker_id, rank, device, vocab2id, args, kv))
         t.start()
         threads.append(t)
         del kv
