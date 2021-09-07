@@ -9,6 +9,7 @@ import multiprocessing as mp
 import lapse
 from signal import signal, SIGINT
 from sys import exit
+import threading
 from embedding import PSEmbedding
 from loss import PSSampledSoftmaxLoss
 from elmo import PSElmo
@@ -17,14 +18,9 @@ from data import OneBillionWordIterableDataset
 from torch.utils.data import DataLoader
 from cli import parse_arguments
 
-num_workers_per_server = 1
-#async_ops = True
-
-#localip = '127.0.0.1'
-#port = '9091'
-
 
 def train(worker_id, rank, vocab2id, args, kv):
+    print(f"started worker with id {worker_id}")
     optimizer = PSAdagrad(
         lr = 0.2,
         initial_accumulator_value=1.0,
@@ -62,11 +58,11 @@ def train(worker_id, rank, vocab2id, args, kv):
     for epoch in range(args.epochs):
         # set up training data
         train_dataset = OneBillionWordIterableDataset(args.dataset)
-        train_loader = DataLoader(train_dataset, batch_size=args.batch_size * args.world_size, collate_fn=list)    
+        train_loader = DataLoader(train_dataset, batch_size=args.batch_size * args.world_size * args.workers_per_node, collate_fn=list)
         for i, batch in enumerate(train_loader):
             if i % args.sync_dense == 0:
                 elmo.pullDenseParameters()
-            word_ids = batch_to_word_ids(batch[rank::args.world_size], vocab2id, args.max_sequence_length)
+            word_ids = batch_to_word_ids(batch[worker_id::args.world_size * args.workers_per_node], vocab2id, args.max_sequence_length)
             elmo_representation, word_mask = elmo(word_ids)
             mask = word_mask.clone()
             mask[:, 0] = False
@@ -96,9 +92,9 @@ def train(worker_id, rank, vocab2id, args, kv):
             num_loss = 0
             with torch.no_grad():
                 test_dataset = OneBillionWordIterableDataset(args.testset)
-                test_loader = DataLoader(test_dataset, batch_size=1*args.world_size, collate_fn=list) 
+                test_loader = DataLoader(test_dataset, batch_size=1 * args.world_size * args.workers_per_node, collate_fn=list)
                 for i, batch in enumerate(test_loader):
-                    word_ids = batch_to_word_ids(batch[rank::args.world_size], vocab2id, args.max_sequence_length)
+                    word_ids = batch_to_word_ids(batch[worker_id::args.world_size * args.workers_per_node], vocab2id, args.max_sequence_length)
                     elmo_representation, word_mask = elmo(word_ids)
                     mask = word_mask.clone()
                     mask[:, 0] = False
@@ -120,7 +116,7 @@ def train(worker_id, rank, vocab2id, args, kv):
             elmo.train()
             classifier.train()
             kv.barrier()
-            loss_part = acc_loss / (num_loss * args.world_size)
+            loss_part = acc_loss / (num_loss * args.world_size * args.workers_per_node)
             kv.push(loss_key, loss_part.cpu())
             kv.barrier() # synchronize workers
             kv.pull(loss_key, loss_val)
@@ -128,35 +124,41 @@ def train(worker_id, rank, vocab2id, args, kv):
 
 
 def init_scheduler(dummy, args):
-    os.environ['DMLC_NUM_WORKER'] = '0'
     os.environ['DMLC_NUM_SERVER'] = str(args.world_size)
     os.environ['DMLC_ROLE'] = 'scheduler'
     os.environ['DMLC_PS_ROOT_URI'] = args.root_uri
     os.environ['DMLC_PS_ROOT_PORT'] = args.root_port
-    lapse.scheduler(args.num_parameters, num_workers_per_server)
+    lapse.scheduler(args.num_parameters, args.workers_per_node)
 
 
-def init_server(rank, lens, vocab2id, args, fn):
-    os.environ['DMLC_NUM_WORKER'] = '0'
+def init_node(local_rank, lens, vocab2id, args, fn):
+    """Start up a Lapse node (server + multiple worker threads)"""
     os.environ['DMLC_NUM_SERVER'] = str(args.world_size)
     os.environ['DMLC_ROLE'] = 'server'
     os.environ['DMLC_PS_ROOT_URI'] = args.root_uri
     os.environ['DMLC_PS_ROOT_PORT'] = args.root_port
     
-    lapse.setup(len(lens), num_workers_per_server)
+    lapse.setup(len(lens), args.workers_per_node)
     s = lapse.Server(lens)
     try:
         rank = s.rank()
     except:
-        print("failed to fetch rank, using default instead")
+        rank = local_rank
+        print("failed to fetch rank, using local rank instead")
 
     print(f"started server with rank {rank}")
 
-    for w in range(num_workers_per_server):
-        worker_id = rank * num_workers_per_server + w
+    threads = []
+    for w in range(args.workers_per_node):
+        worker_id = rank * args.workers_per_node + w
         kv = lapse.Worker(0, w+1, s)
-        fn(worker_id, rank, vocab2id, args, kv)
+        t = threading.Thread(target=fn, args=(worker_id, rank, vocab2id, args, kv))
+        t.start()
+        threads.append(t)
         del kv
+
+    for t in threads:
+        t.join()
 
     # shutdown server
     s.shutdown()
@@ -198,8 +200,8 @@ if __name__ == "__main__":
         processes.append(p)
 
     # launch lapse processes
-    for rank in range(args.servers):
-        p = mp.Process(target=init_server, args=(rank, lens, vocab2id, args, train))
+    for local_rank in range(args.nodes):
+        p = mp.Process(target=init_node, args=(local_rank, lens, vocab2id, args, train))
         p.start()
         processes.append(p)
 

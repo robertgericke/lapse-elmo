@@ -25,12 +25,14 @@ def parse_arguments():
     distribution.add_argument('-r', '--role', default='scheduler', type=str, help='scheduler or server')
     distribution.add_argument('-ru', '--root_uri', default='127.0.0.1', type=str, help='adress of the scheduler node')
     distribution.add_argument('-rp', '--root_port', default='9091', type=str, help='port of the scheduler node')
-    distribution.add_argument('-ps', '--servers', default=1, type=int, help='number of local serve instances to create')
+    distribution.add_argument('-nn', '--nodes', default=1, type=int, help='number of local server instances to create')
+    distribution.add_argument('-nw', '--workers_per_node', default=1, type=int, help='number of worker threads per node')
+    #distribution.add_argument('-ps', '--servers', default=1, type=int, help='number of local serve instances to create')
     distribution.add_argument('-ws', '--world_size', default=0, type=int, help='total number of server instances')
     distribution.add_argument('-sd', '--sync_dense', default=1, type=int, help='synchronize dense model parameters every n steps')
     args = parser.parse_args()
     if args.world_size == 0:
-        args.world_size = args.servers
+        args.world_size = args.nodes
     return args
 
 
