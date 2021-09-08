@@ -19,7 +19,7 @@ git clone https://github.com/alexrenz/lapse-ps.git
 cd lapse-ps
 make ps KEY_TYPE=int64_t CXX11_ABI=$(python bindings/lookup_torch_abi.py) DEPS_PATH=$(pwd)/deps_bindings
 cd bindings
-python3 setup.py install --user
+python setup.py install --user
 ```
 
 ### Setup
@@ -36,7 +36,7 @@ tar -xzf 1-billion-word-language-modeling-benchmark-r13output.tar.gz
 # Download vocabulary file
 wget https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/vocab-2016-09-10.txt
 # Create vocabulary file using the vocab utility
-python3 vocab.py ../1-billion-word-language-modeling-benchmark-r13output/training-monolingual.tokenized.shuffled/
+python vocab.py ../1-billion-word-language-modeling-benchmark-r13output/training-monolingual.tokenized.shuffled/
 ```
 
 Note: The vocabulary file encompasses tokens found in the training data each separated by a new line and sorted by frequency - highest to lowest, but it does not require any special tokens e.g. `<S>,</S>` which other implementations use to mark sentence boundaries.
@@ -44,7 +44,32 @@ Note: The vocabulary file encompasses tokens found in the training data each sep
 ### Running the training script
 ```bash
 cd lapse-elmo
-python3 run.py ../1-billion-word-language-modeling-benchmark-r13output/training-monolingual.tokenized.shuffled/ ../vocab-2016-09-10.txt
+python run.py ../1-billion-word-language-modeling-benchmark-r13output/training-monolingual.tokenized.shuffled/ ../vocab-2016-09-10.txt
+```
+#### Local training options
+Use the options `--nodes` and `--workers_per_node` to set the number of server processes and worker threads per process.
+```bash
+python run.py ../1-billion-word-language-modeling-benchmark-r13output/training-monolingual.tokenized.shuffled/ ../vocab-2016-09-10.txt --nodes 2 --workers_per_node 1
+```
+The example above starts two nodes with one worker each.
+
+Note: since world_size is not provided the script automatically asumes local training and implicitly starts a scheduler.
+
+#### CUDA options
+The script automatically makes use of available CUDA devices. The this can be disabled by using `--no_cuda`.
+By default workers are assigned round robin to CUDA devices. Use `--device_ids` to provide an alternative assignment (one device ID for each worker thread).
+```bash
+python run.py ../1-billion-word-language-modeling-benchmark-r13output/training-monolingual.tokenized.shuffled/ ../vocab-2016-09-10.txt --nodes 2 --workers_per_node 1 --device_ids 2 3
 ```
 
-Note: See `python3 run.py --help` for further programm options.
+#### Distributed training
+Begin distributed training by starting the parameter server scheduler explicitly. For that specify the address and port of the scheduler as well as the world size which is the total number of server nodes.
+```bash
+python run.py ../1-billion-word-language-modeling-benchmark-r13output/training-monolingual.tokenized.shuffled/ ../vocab-2016-09-10.txt --role scheduler --nodes 0 --root_uri "127.0.0.1" --root_port "9091" --world_size 2
+```
+After that start the specified number of nodes. As before, specify the address and port of the scheduler and the world size.
+```bash
+python run.py ../1-billion-word-language-modeling-benchmark-r13output/training-monolingual.tokenized.shuffled/ ../vocab-2016-09-10.txt --nodes 1 --root_uri "127.0.0.1" --root_port "9091" --world_size 2
+```
+
+Note: See `python run.py --help` for further program options.
