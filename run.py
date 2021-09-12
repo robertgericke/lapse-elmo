@@ -137,7 +137,7 @@ def init_node(local_rank, lens, vocab2id, args, fn):
     lapse.setup(len(lens), args.workers_per_node)
     s = lapse.Server(lens)
     try:
-        rank = s.rank()
+        rank = s.my_rank()
     except:
         rank = local_rank
         print("failed to fetch rank, using local rank instead")
