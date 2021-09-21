@@ -36,7 +36,6 @@ def train(worker_id, rank, device, vocab2id, args, kv):
         lstm_recurrent_dropout=args.recurrent_dropout,
         dropout=args.dropout,
         opt=optimizer,
-        estimate_parameters=args.sync_dense>1,
     )
     classifier = PSSampledSoftmaxLoss(
         kv=kv, 
@@ -56,8 +55,7 @@ def train(worker_id, rank, device, vocab2id, args, kv):
         train_dataset = OneBillionWordIterableDataset(args.dataset)
         train_loader = DataLoader(train_dataset, batch_size=args.batch_size * args.world_size * args.workers_per_node, collate_fn=list)
         for i, batch in enumerate(train_loader):
-            if i % args.sync_dense == 0:
-                elmo.pullDenseParameters()
+            elmo.pullDenseParameters()
             word_ids = batch_to_word_ids(batch[worker_id::args.world_size * args.workers_per_node], vocab2id, args.max_sequence_length)
             elmo_representation, word_mask = elmo(word_ids)
             mask = word_mask.clone()
@@ -135,7 +133,16 @@ def init_node(local_rank, lens, vocab2id, args, fn):
     os.environ['DMLC_PS_ROOT_PORT'] = args.root_port
     
     lapse.setup(len(lens), args.workers_per_node)
-    s = lapse.Server(lens)
+    args.hotspots = 3
+    if args.hotspots < 0:
+        s = lapse.Server(lens)
+    else:
+        classifier_offset = len(PSElmo.lens(args.num_tokens, args.embedding_dim, args.cell_size, args.layers))
+        hotspots_elmo = PSElmo.hotspots(args.hotspots, args.num_tokens, args.layers)
+        hotspots_classifier = PSSampledSoftmaxLoss.hotspots(args.hotspots, args.num_tokens) + classifier_offset
+        hotspots = torch.cat((hotspots_elmo, hotspots_classifier))
+        s = lapse.Server(lens, hotspots)
+
     try:
         rank = s.my_rank()
     except:

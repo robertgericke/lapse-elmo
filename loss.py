@@ -13,6 +13,11 @@ class PSSampledSoftmaxLoss(torch.nn.Module):
     def lens(num_embeddings, embedding_dim):
         return PSEmbedding.lens(num_embeddings, embedding_dim+1)
 
+    def hotspots(num_keys, num_embeddings):
+        embeddings = torch.tensor(range(num_keys))
+        accumulators = torch.tensor(range(num_embeddings, num_embeddings+num_keys))
+        return torch.cat((embeddings,accumulators))
+
     def __init__(
         self,
         kv: lapse.Worker,

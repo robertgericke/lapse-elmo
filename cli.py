@@ -16,9 +16,9 @@ def parse_arguments():
     distribution.add_argument('-ru', '--root_uri', default='127.0.0.1', type=str, help='adress of the scheduler node')
     distribution.add_argument('-rp', '--root_port', default='9091', type=str, help='port of the scheduler node')
     distribution.add_argument('-nn', '--nodes', default=1, type=int, help='number of local server nodes to create')
+    distribution.add_argument('-hs', '--hotspots', default=100, type=int, help='number of hotspot embeddings > 0; only dense parameters = 0; no hotspot parameters < 0')
     distribution.add_argument('-nw', '--workers_per_node', default=1, type=int, help='number of worker threads per node')
     distribution.add_argument('-ws', '--world_size', type=int, help='total number of server nodes')
-    distribution.add_argument('-sd', '--sync_dense', default=1, type=int, help='synchronize dense model parameters every n steps')
     # elmo options
     elmo = parser.add_argument_group('elmo')
     elmo.add_argument('-ed', '--embedding_dim', default=128, type=int, help='dimension of the word embeddings')

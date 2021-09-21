@@ -25,7 +25,7 @@ class PSEmbedding(torch.nn.Module):
         self.embedding_dim = embedding_dim
         self.opt = opt
         self._initEmbeddings(pad_zero)
-    
+
     def _initEmbeddings(self, pad_zero: bool):
         keys = torch.LongTensor(range(self.num_embeddings)) + self.key_offset
         values = torch.empty((self.num_embeddings, self.embedding_dim), dtype=torch.float32)
