@@ -17,6 +17,8 @@ from utils import load_vocab, batch_to_word_ids
 from data import OneBillionWordIterableDataset
 from torch.utils.data import DataLoader
 from cli import parse_arguments
+from iterator import PrefetchIterator
+from functools import partial
 
 
 def train(worker_id, rank, device, vocab2id, args, kv):
@@ -52,11 +54,12 @@ def train(worker_id, rank, device, vocab2id, args, kv):
 
     for epoch in range(args.epochs):
         # set up training data
+        collate_fn = partial(collate, kv, worker_id, vocab2id, args)
         train_dataset = OneBillionWordIterableDataset(args.dataset)
-        train_loader = DataLoader(train_dataset, batch_size=args.batch_size * args.world_size * args.workers_per_node, collate_fn=list)
-        for i, batch in enumerate(train_loader):
+        train_loader = DataLoader(train_dataset, batch_size=args.batch_size * args.world_size * args.workers_per_node, collate_fn=collate_fn)
+        train_iterator = PrefetchIterator(args.localize_ahead, train_loader)
+        for i, word_ids in enumerate(train_iterator):
             elmo.pullDenseParameters()
-            word_ids = batch_to_word_ids(batch[worker_id::args.world_size * args.workers_per_node], vocab2id, args.max_sequence_length)
             elmo_representation, word_mask = elmo(word_ids)
             mask = word_mask.clone()
             mask[:, 0] = False
@@ -86,8 +89,9 @@ def train(worker_id, rank, device, vocab2id, args, kv):
             num_loss = 0
             with torch.no_grad():
                 test_dataset = OneBillionWordIterableDataset(args.testset)
-                test_loader = DataLoader(test_dataset, batch_size=1 * args.world_size * args.workers_per_node, collate_fn=list)
-                for i, batch in enumerate(test_loader):
+                test_loader = DataLoader(test_dataset, batch_size=1 * args.world_size * args.workers_per_node, collate_fn=collate_fun)
+                test_iterator = PrefetchIterator(args.num_batches, test_loader)
+                for i, batch in enumerate(test_iterator):
                     word_ids = batch_to_word_ids(batch[worker_id::args.world_size * args.workers_per_node], vocab2id, args.max_sequence_length)
                     elmo_representation, word_mask = elmo(word_ids)
                     mask = word_mask.clone()
@@ -116,6 +120,11 @@ def train(worker_id, rank, device, vocab2id, args, kv):
             kv.pull(loss_key, loss_val)
             print('avg loss: %.3f' % (loss_val).item())
 
+def collate(kv, worker_id, vocab2id, args, batch):
+    worker_split = batch[worker_id::args.world_size * args.workers_per_node]
+    word_ids = batch_to_word_ids(worker_split, vocab2id, args.max_sequence_length)
+    kv.localize(word_ids.flatten())
+    return word_ids
 
 def init_scheduler(dummy, args):
     os.environ['DMLC_NUM_SERVER'] = str(args.world_size)
