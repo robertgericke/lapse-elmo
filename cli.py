@@ -28,6 +28,7 @@ def parse_arguments():
     elmo.add_argument('-rd', '--recurrent_dropout', default=0.1, type=float, help='recurrent dropout for each lstm')
     elmo.add_argument('-fd', '--dropout', default=0.1, type=float, help='final dropout for elmo representations')
     elmo.add_argument('-sl', '--max_sequence_length', default=400, type=int, help='maximum sequence length (clipped above)')
+    elmo.add_argument('-t', '--tracker', default=False, action='store_true', help='use this option if running with lapse tracker scripts')
     # training options
     training = parser.add_argument_group('training')
     training.add_argument('-e', '--epochs', default=2, type=int, help='number of epochs to run')

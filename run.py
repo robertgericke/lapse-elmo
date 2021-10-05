@@ -201,6 +201,16 @@ if __name__ == "__main__":
     except RuntimeError:
         pass
 
+    if args.tracker:
+        lapse_env = {'DMLC_NUM_SERVER', 'DMLC_ROLE', 'DMLC_PS_ROOT_URI', 'DMLC_PS_ROOT_PORT'}
+        assert os.environ.keys() >= lapse_env, f'Missing Lapse environment variables. Check {lapse_env} are set.'
+        args.role = os.environ['DMLC_ROLE']
+        args.root_uri = os.environ['DMLC_PS_ROOT_URI']
+        args.root_port = os.environ['DMLC_PS_ROOT_PORT']
+        args.world_size = int(os.environ['DMLC_NUM_SERVER'])
+        if args.role == 'scheduler':
+            args.nodes = 0
+
     vocab2id = load_vocab(args.vocab)
     args.num_tokens = len(vocab2id)
 
