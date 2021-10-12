@@ -1,24 +1,29 @@
 #!/usr/bin/env python3
-import os
-import torch
-from torch import cuda
-import torch.distributed as dist
+from functools import partial
 import numpy as np
-from optimizer import PSSGD, PSAdagrad
-from torch.multiprocessing import Process, set_start_method
-import lapse
+import os
 from signal import signal, SIGINT
 from sys import exit
-import threading
-from embedding import PSEmbedding
-from loss import PSSampledSoftmaxLoss
-from elmo import PSElmo
-from utils import load_vocab, batch_to_word_ids
-from data import OneBillionWordIterableDataset
+from threading import Thread
+import torch
+from torch import cuda
+from torch.multiprocessing import Process, set_start_method
 from torch.utils.data import DataLoader
+
+import lapse
+
 from cli import parse_arguments
+from data import OneBillionWordIterableDataset
+from elmo import PSElmo
 from iterator import PrefetchIterator
-from functools import partial
+from loss import PSSampledSoftmaxLoss
+from optimizer import PSSGD, PSAdagrad
+from utils import load_vocab, batch_to_word_ids
+
+
+def run_worker(worker_id, rank, device, vocab2id, args, kv):
+    train(worker_id, rank, device, vocab2id, args, kv)
+    kv.barrier() # wait for all workers to finish
 
 
 def train(worker_id, rank, device, vocab2id, args, kv):
@@ -77,8 +82,6 @@ def train(worker_id, rank, device, vocab2id, args, kv):
             loss.backward()
             elmo.pushUpdates()
             print('[%6d] loss: %.3f' % (i, loss.item()))
-            if (i+1)%5 == 0:
-                break;
 
         kv.barrier() # synchronize workers
         if args.testset:
@@ -134,17 +137,18 @@ def init_scheduler(dummy, args):
     os.environ['DMLC_ROLE'] = 'scheduler'
     os.environ['DMLC_PS_ROOT_URI'] = args.root_uri
     os.environ['DMLC_PS_ROOT_PORT'] = args.root_port
-    lapse.scheduler(args.num_parameters, args.workers_per_node)
+
+    lapse.scheduler(args.num_keys, args.workers_per_node)
 
 
-def init_node(local_rank, lens, vocab2id, args, fn):
+def init_node(local_rank, lens, vocab2id, args):
     """Start up a Lapse node (server + multiple worker threads)"""
     os.environ['DMLC_NUM_SERVER'] = str(args.world_size)
     os.environ['DMLC_ROLE'] = 'server'
     os.environ['DMLC_PS_ROOT_URI'] = args.root_uri
     os.environ['DMLC_PS_ROOT_PORT'] = args.root_port
     
-    lapse.setup(len(lens), args.workers_per_node)
+    lapse.setup(args.num_keys, args.workers_per_node)
     args.hotspots = 3
     if args.hotspots < 0:
         s = lapse.Server(lens)
@@ -159,31 +163,35 @@ def init_node(local_rank, lens, vocab2id, args, fn):
         rank = s.my_rank()
     except:
         rank = local_rank
-        print("failed to fetch rank, using local rank instead")
+        print("Failed to fetch the global rank, using local rank instead.")
 
-    print(f"started server with rank {rank}")
+    print(f"Started server with rank {rank}.")
 
     threads = []
     for w in range(args.workers_per_node):
         worker_id = rank * args.workers_per_node + w
         kv = lapse.Worker(0, w+1, s)
-        device = torch.device("cpu")
-        if args.cuda and cuda.is_available():
-            local_worker_id = local_rank * args.workers_per_node + w
-            if args.device_ids is None:
-                device_id = local_worker_id % cuda.device_count()
-            else:
-                device_id = args.device_ids[local_worker_id]
-            device = torch.device("cuda:" + str(device_id))
 
-        t = threading.Thread(target=fn, args=(worker_id, rank, device, vocab2id, args, kv))
+        # assign training device to worker
+        if args.cuda:
+            local_worker_id = local_rank * args.workers_per_node + w
+            if args.device_ids:
+                device_id = args.device_ids[local_worker_id]
+            else:
+                device_id = local_worker_id % cuda.device_count()
+            device = torch.device("cuda:" + str(device_id))
+        else:
+            device = torch.device("cpu")
+
+        # run worker
+        t = Thread(target=run_worker, args=(worker_id, rank, device, vocab2id, args, kv))
         t.start()
         threads.append(t)
 
     for t in threads:
         t.join()
 
-    # shutdown server
+    # shutdown lapse node
     s.shutdown()
 
 
@@ -196,13 +204,10 @@ def kill_processes(signal_received, frame):
 
 processes = []
 if __name__ == "__main__":
+    # run cli
     args = parse_arguments()
 
-    try:
-        set_start_method('spawn')
-    except RuntimeError:
-        pass
-
+    # read environment variables when running with tracker
     if args.tracker:
         lapse_env = {'DMLC_NUM_SERVER', 'DMLC_ROLE', 'DMLC_PS_ROOT_URI', 'DMLC_PS_ROOT_PORT'}
         assert os.environ.keys() >= lapse_env, f'Missing Lapse environment variables. Check {lapse_env} are set.'
@@ -213,28 +218,33 @@ if __name__ == "__main__":
         if args.role == 'scheduler':
             args.nodes = 0
 
+    # load vocab
     vocab2id = load_vocab(args.vocab)
     args.num_tokens = len(vocab2id)
 
+    # calculate parameter lens
     lens_elmo = PSElmo.lens(args.num_tokens, args.embedding_dim, args.cell_size, args.layers)
     lens_classifier = PSSampledSoftmaxLoss.lens(args.num_tokens, args.embedding_dim)
     lens = torch.cat((lens_elmo,lens_classifier,torch.ones(1)))
-    args.num_parameters = len(lens)
+    args.num_keys = len(lens)
 
     print(args)
 
     # catch interrupt (to shut down lapse processes)
     signal(SIGINT, kill_processes)
 
+    # "spawn" required for cuda training
+    set_start_method('spawn')
+
+    # launch lapse scheduler
     if args.role == 'scheduler':
-        # launch lapse scheduler
         p = Process(target=init_scheduler, args=(0, args))
         p.start()
         processes.append(p)
 
     # launch lapse processes
     for local_rank in range(args.nodes):
-        p = Process(target=init_node, args=(local_rank, lens, vocab2id, args, train))
+        p = Process(target=init_node, args=(local_rank, lens, vocab2id, args))
         p.start()
         processes.append(p)
 
