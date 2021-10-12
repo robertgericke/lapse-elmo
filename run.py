@@ -5,7 +5,7 @@ from torch import cuda
 import torch.distributed as dist
 import numpy as np
 from optimizer import PSSGD, PSAdagrad
-import multiprocessing as mp
+from torch.multiprocessing import Process, set_start_method
 import lapse
 from signal import signal, SIGINT
 from sys import exit
@@ -75,7 +75,10 @@ def train(worker_id, rank, device, vocab2id, args, kv):
 
             loss = classifier(context, targets) / targets.size(0)
             loss.backward()
+            elmo.pushUpdates()
             print('[%6d] loss: %.3f' % (i, loss.item()))
+            if (i+1)%5 == 0:
+                break;
 
         kv.barrier() # synchronize workers
         if args.testset:
@@ -176,7 +179,6 @@ def init_node(local_rank, lens, vocab2id, args, fn):
         t = threading.Thread(target=fn, args=(worker_id, rank, device, vocab2id, args, kv))
         t.start()
         threads.append(t)
-        del kv
 
     for t in threads:
         t.join()
@@ -197,7 +199,7 @@ if __name__ == "__main__":
     args = parse_arguments()
 
     try:
-        mp.set_start_method('spawn')
+        set_start_method('spawn')
     except RuntimeError:
         pass
 
@@ -226,13 +228,13 @@ if __name__ == "__main__":
 
     if args.role == 'scheduler':
         # launch lapse scheduler
-        p = mp.Process(target=init_scheduler, args=(0, args))
+        p = Process(target=init_scheduler, args=(0, args))
         p.start()
         processes.append(p)
 
     # launch lapse processes
     for local_rank in range(args.nodes):
-        p = mp.Process(target=init_node, args=(local_rank, lens, vocab2id, args, train))
+        p = Process(target=init_node, args=(local_rank, lens, vocab2id, args, train))
         p.start()
         processes.append(p)
 
