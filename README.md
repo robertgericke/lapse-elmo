@@ -72,4 +72,11 @@ After that start the specified number of nodes. As before, specify the address a
 python run.py ../1-billion-word-language-modeling-benchmark-r13output/training-monolingual.tokenized.shuffled/ ../vocab-2016-09-10.txt --nodes 1 --root_uri "127.0.0.1" --root_port "9091" --world_size 2
 ```
 
+#### Running with tracker scrips
+The Script may also be strated using the [tracker scrips](https://github.com/alexrenz/lapse-ps/tree/main/tracker) of Lapse. For that use the `--tracker` option.
+```bash
+python ../lapse/tracker/dmlc_ssh.py -s 2 -H ../hosts.txt python run.py ../1-billion-word-language-modeling-benchmark-r13output/training-monolingual.tokenized.shuffled/ ../vocab-2016-09-10.txt --tracker
+```
+
+
 Note: See `python run.py --help` for further program options.
