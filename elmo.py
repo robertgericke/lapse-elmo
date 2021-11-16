@@ -87,26 +87,21 @@ class PSElmo(torch.nn.Module):
         self._lstm_offset = key_offset + len(PSEmbedding.lens(num_tokens+1, embedding_dim))
         self._initParameters()
 
-    #def _add_buffer(self, name, tensor):
-    #    self._buffers[name] = tensor
-    #    self._non_persistent_buffers_set.add(name)
 
     def _initParameters(self):
         for i, (_, param) in enumerate(self.named_parameters()):
             key = torch.tensor([2*i+self._lstm_offset])
             self.kv.set(key, param)
             if self.opt:
-                accumulator = torch.full(param.size(), self.opt.initial_accumulator_value)
+                accumulator = torch.full(param.size(), self.opt.initial_accumulator_value, dtype=torch.float32)
                 self.kv.set(key+1, accumulator)
                 buffer_id = str(i)
                 self.register_buffer(buffer_id, accumulator)
-                #self._add_buffer(buffer_id, accumulator)
                 #param.register_hook(self.grad_hook(key, buffer_id, self.opt))
 
     def grad_hook(self, key: torch.Tensor, buffer_id, optimizer: PSOptimizer) -> torch.Tensor:
         def hook(grad: torch.Tensor) -> torch.Tensor:
-            accumulator = dict(self.named_buffers())[buffer_id]
-            update_parameter, update_accumulator = optimizer.update(grad, accumulator)
+            update_parameter, update_accumulator = optimizer.update(grad, getattr(self, buffer_id))
             self.kv.push(key, update_parameter.cpu())
             self.kv.push(key+1, update_accumulator.cpu())
             return grad
@@ -117,23 +112,21 @@ class PSElmo(torch.nn.Module):
             device = self.scalar_mix.gamma.device
             self.cpu()
             timestamps = []
-            accumulators = dict(self.named_buffers())
             for i, (_, param) in enumerate(self.named_parameters()):
                 key = torch.tensor([2*i+self._lstm_offset])
                 timestamps.append(self.kv.pull(key, param))
                 buffer_id = str(i)
-                timestamps.append(self.kv.pull(key+1, accumulators[buffer_id]))
+                timestamps.append(self.kv.pull(key+1, getattr(self, buffer_id)))
             for ts in timestamps:
                 self.kv.wait(ts)
             self.to(device)
 
     def pushUpdates(self):
         with torch.no_grad():
-            accumulators = dict(self.named_buffers())
             for i, (_, param) in enumerate(self.named_parameters()):
                 key = torch.tensor([2*i+self._lstm_offset])
                 buffer_id = str(i)
-                update_parameter, update_accumulator = self.opt.update(param.grad, accumulators[buffer_id])
+                update_parameter, update_accumulator = self.opt.update(param.grad, getattr(self, buffer_id))
                 self.kv.push(key, update_parameter.cpu())
                 self.kv.push(key+1, update_accumulator.cpu())
                 key = torch.tensor([2*i+self._lstm_offset])

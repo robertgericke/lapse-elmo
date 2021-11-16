@@ -20,7 +20,7 @@ class PSAdagrad(PSOptimizer):
         self.initial_accumulator_value = initial_accumulator_value
 
     def update(self, gradient: torch.Tensor, accumulator: torch.Tensor) -> torch.Tensor:
-        accumulator = accumulator.to(gradient.device)
-        update_accumulator = gradient * gradient
-        update_gradient = -self.lr * gradient / (torch.sqrt(accumulator+update_accumulator) + self.eps)
-        return update_gradient, update_accumulator
+        with torch.no_grad():
+            update_accumulator = gradient * gradient
+            update_gradient = -self.lr * gradient / (torch.sqrt(accumulator.to(gradient.device)+update_accumulator) + self.eps)
+            return update_gradient, update_accumulator

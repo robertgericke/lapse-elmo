@@ -33,7 +33,7 @@ class PSEmbedding(torch.nn.Module):
         if pad_zero:
             values[0,:] = 0 # 0 embedding
         ts = self.kv.set(keys, values)
-        ts = self.kv.set(keys+self.num_embeddings, torch.full(values.size(), self.opt.initial_accumulator_value))
+        ts = self.kv.set(keys+self.num_embeddings, torch.full(values.size(), self.opt.initial_accumulator_value, dtype=torch.float32))
 
     def forward(self, keys: torch.Tensor, device=None) -> torch.Tensor:
         keys = keys + self.key_offset
