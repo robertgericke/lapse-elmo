@@ -5,7 +5,7 @@ In contrast to previous ELMo implementations, the model uses a direct embedding 
 
 ## Get started
 ### Dependencies
-The model is implemented in the [PyTorch](https://pytorch.org/) framework and uses multiple ELMo related modules of the [AllenNLP](https://allennlp.org/) library. Install both via the following commands:
+The model is implemented in the [PyTorch](https://pytorch.org/) framework and uses multiple ELMo related modules of the [AllenNLP](https://allennlp.org/) library. Install both via the following command:
 ```bash
 pip install allennlp torch==1.9.1+cu111 torchvision==0.10.1+cu111 torchaudio==0.9.1 -f https://download.pytorch.org/whl/torch_stable.html
 ```
