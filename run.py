@@ -80,7 +80,7 @@ def train(worker_id, rank, device, vocab2id, args, kv):
 
             loss = classifier(context, targets) / targets.size(0)
             loss.backward()
-            elmo.pushUpdates()
+            #elmo.pushUpdates()
             print('[%6d] loss: %.3f' % (i, loss.item()))
 
         kv.barrier() # synchronize workers

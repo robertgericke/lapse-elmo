@@ -97,7 +97,7 @@ class PSElmo(torch.nn.Module):
                 self.kv.set(key+1, accumulator)
                 buffer_id = str(i)
                 self.register_buffer(buffer_id, accumulator)
-                #param.register_hook(self.grad_hook(key, buffer_id, self.opt))
+                param.register_hook(self.grad_hook(key, buffer_id, self.opt))
 
     def grad_hook(self, key: torch.Tensor, buffer_id, optimizer: PSOptimizer) -> torch.Tensor:
         def hook(grad: torch.Tensor) -> torch.Tensor:
