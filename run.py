@@ -149,7 +149,6 @@ def init_node(local_rank, lens, vocab2id, args):
     os.environ['DMLC_PS_ROOT_PORT'] = args.root_port
     
     lapse.setup(args.num_keys, args.workers_per_node)
-    args.hotspots = 3
     if args.hotspots < 0:
         s = lapse.Server(lens)
     else:
