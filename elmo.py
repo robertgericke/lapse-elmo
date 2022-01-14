@@ -86,6 +86,8 @@ class PSElmo(torch.nn.Module):
         self.dropout = Dropout(p=dropout)
         self._lstm_offset = key_offset + len(PSEmbedding.lens(num_tokens+1, embedding_dim))
         self._initParameters()
+        self._timestamps = []
+        self._device = None
 
 
     def _initParameters(self):
@@ -109,17 +111,13 @@ class PSElmo(torch.nn.Module):
 
     def pullDenseParameters(self):
         with torch.no_grad():
-            device = self.scalar_mix.gamma.device
+            self._device = self.scalar_mix.gamma.device
             self.cpu()
-            timestamps = []
             for i, (_, param) in enumerate(self.named_parameters()):
                 key = torch.tensor([2*i+self._lstm_offset])
-                timestamps.append(self.kv.pull(key, param))
+                self._timestamps.append(self.kv.pull(key, param))
                 buffer_id = str(i)
-                timestamps.append(self.kv.pull(key+1, getattr(self, buffer_id)))
-            for ts in timestamps:
-                self.kv.wait(ts)
-            self.to(device)
+                self._timestamps.append(self.kv.pull(key+1, getattr(self, buffer_id)))
 
     def pushUpdates(self):
         with torch.no_grad():
@@ -132,6 +130,14 @@ class PSElmo(torch.nn.Module):
                 key = torch.tensor([2*i+self._lstm_offset])
 
     def forward(self, inputs: torch.Tensor) -> (torch.Tensor, torch.BoolTensor):
+        # wait for updated dense parameters and move back to gpu
+        if self._timestamps:
+            with torch.no_grad():
+                for ts in self._timestamps:
+                    self.kv.wait(ts)
+                self.to(self._device)
+            self._timestamps = []
+
         device = self.scalar_mix.gamma.device
         embedded = self.word_embedding(inputs, device)
         mask = (inputs > 0).to(device)
