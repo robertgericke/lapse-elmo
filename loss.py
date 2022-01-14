@@ -58,14 +58,17 @@ class PSSampledSoftmaxLoss(torch.nn.Module):
         return torch.nn.functional.nll_loss(log_softmax, targets.to(embeddings.device), reduction="sum")
 
     def _forward_train(self, embeddings: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
-        sampled_ids, target_expected_count, sampled_expected_count = self.log_uniform_candidate_sampler(targets.to(embeddings.device))
+        sampled_ids, target_expected_count, sampled_expected_count = self.log_uniform_candidate_sampler(targets)
+        
+        target_expected_count = target_expected_count.to(embeddings.device)
+        sampled_expected_count = sampled_expected_count.to(embeddings.device)
 
         long_targets = targets.long()
         long_targets.requires_grad_(False)
         
         # Get the softmax weights (so we can compute logits)
         # shape (batch_size * max_sequence_length + num_samples)
-        all_ids = torch.cat([long_targets, sampled_ids.cpu()], dim=0)
+        all_ids = torch.cat([long_targets, sampled_ids], dim=0)
         all_e = self.embedding(all_ids, embeddings.device)
         all_w = all_e[:,1:]
         all_b = all_e[:,:1].flatten()
@@ -99,8 +102,8 @@ class PSSampledSoftmaxLoss(torch.nn.Module):
         # softmax, so set the sampled logits of true values to a large
         # negative number
         # [batch_size, n_samples]
-        true_in_sample_mask = sampled_ids == long_targets.to(embeddings.device).unsqueeze(1)
-        masked_sampled_logits = sampled_logits.masked_fill(true_in_sample_mask, -10000.0)
+        true_in_sample_mask = sampled_ids == long_targets.unsqueeze(1)
+        masked_sampled_logits = sampled_logits.masked_fill(true_in_sample_mask.to(embeddings.device), -10000.0)
         # now concat the true logits as index 0
         # [batch_size, n_samples + 1]
         logits = torch.cat([true_logits.unsqueeze(1), masked_sampled_logits], dim=1)
