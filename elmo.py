@@ -3,10 +3,18 @@ from allennlp.modules.scalar_mix import ScalarMix
 from embedding import PSEmbedding
 from optimizer import PSOptimizer
 import torch
-from torch.nn import Dropout
+from torch.nn import Dropout, Parameter
 from typing import List
 import lapse
+import functools
 
+
+def rgetattr(obj, path): # recursive getattr: eg. elmo.scalar_mix.gamma
+    return functools.reduce(getattr, path.split('.'), obj)
+
+def rsetattr(obj, path, val): # recursive setattr: eg. elmo.scalar_mix.gamma
+    pre, _, post = path.rpartition('.')
+    return setattr(rgetattr(obj, pre) if pre else obj, post, val)
 
 class PSElmo(torch.nn.Module):
 
@@ -85,59 +93,50 @@ class PSElmo(torch.nn.Module):
         )
         self.dropout = Dropout(p=dropout)
         self._lstm_offset = key_offset + len(PSEmbedding.lens(num_tokens+1, embedding_dim))
-        self._initParameters()
         self._timestamps = []
-        self._device = None
+        self._parambuffer = {}
+        self._accumbuffer = {}
+        self._initParameters()
 
 
     def _initParameters(self):
-        for i, (_, param) in enumerate(self.named_parameters()):
+        for i, (name, param) in enumerate(self.named_parameters()):
             key = torch.tensor([2*i+self._lstm_offset])
-            self.kv.set(key, param)
-            if self.opt:
-                accumulator = torch.full(param.size(), self.opt.initial_accumulator_value, dtype=torch.float32)
-                self.kv.set(key+1, accumulator)
-                buffer_id = str(i)
-                self.register_buffer(buffer_id, accumulator)
-                param.register_hook(self.grad_hook(key, buffer_id, self.opt))
+            self._parambuffer[name] = param.clone().detach()
+            self._accumbuffer[name] = torch.full(param.size(), self.opt.initial_accumulator_value, dtype=torch.float32)
+            self.kv.set(key, self._parambuffer[name])
+            self.kv.set(key+1, self._accumbuffer[name])
+            param.register_hook(self.grad_hook(key, name, self.opt))
 
-    def grad_hook(self, key: torch.Tensor, buffer_id, optimizer: PSOptimizer) -> torch.Tensor:
+    def grad_hook(self, key: torch.Tensor, name, optimizer: PSOptimizer) -> torch.Tensor:
         def hook(grad: torch.Tensor) -> torch.Tensor:
-            update_parameter, update_accumulator = optimizer.update(grad, getattr(self, buffer_id))
-            self.kv.push(key, update_parameter.cpu())
-            self.kv.push(key+1, update_accumulator.cpu())
+            update_parameter, update_accumulator = optimizer.update(grad.cpu(), self._accumbuffer[name])
+            self.kv.push(key, update_parameter)
+            self.kv.push(key+1, update_accumulator)
             return grad
         return hook
 
-    def pullDenseParameters(self):
+    def pull_dense_parameters_async(self):
         with torch.no_grad():
-            self._device = self.scalar_mix.gamma.device
-            self.cpu()
-            for i, (_, param) in enumerate(self.named_parameters()):
+            for i, (name, param) in enumerate(self.named_parameters()):
                 key = torch.tensor([2*i+self._lstm_offset])
-                self._timestamps.append(self.kv.pull(key, param))
-                buffer_id = str(i)
-                self._timestamps.append(self.kv.pull(key+1, getattr(self, buffer_id)))
+                self._timestamps.append(self.kv.pull(key, self._parambuffer[name]))
+                self._timestamps.append(self.kv.pull(key+1, self._accumbuffer[name]))
 
-    def pushUpdates(self):
-        with torch.no_grad():
-            for i, (_, param) in enumerate(self.named_parameters()):
-                key = torch.tensor([2*i+self._lstm_offset])
-                buffer_id = str(i)
-                update_parameter, update_accumulator = self.opt.update(param.grad, getattr(self, buffer_id))
-                self.kv.push(key, update_parameter.cpu())
-                self.kv.push(key+1, update_accumulator.cpu())
-                key = torch.tensor([2*i+self._lstm_offset])
+    def wait_and_load_pulled_parameters(self):
+        if self._timestamps:
+            for ts in self._timestamps:
+                self.kv.wait(ts)
+            self._timestamps = []
+            with torch.no_grad():
+                for i, (name, param) in enumerate(self.named_parameters()):
+                    key = torch.tensor([2*i+self._lstm_offset])
+                    newParam = Parameter(self._parambuffer[name].to(param.device))
+                    newParam.register_hook(self.grad_hook(key, name, self.opt))
+                    rsetattr(self, name, newParam)
 
     def forward(self, inputs: torch.Tensor) -> (torch.Tensor, torch.BoolTensor):
-        # wait for updated dense parameters and move back to gpu
-        if self._timestamps:
-            with torch.no_grad():
-                for ts in self._timestamps:
-                    self.kv.wait(ts)
-                self.to(self._device)
-            self._timestamps = []
-
+        self.wait_and_load_pulled_parameters()
         device = self.scalar_mix.gamma.device
         embedded = self.word_embedding(inputs, device)
         mask = (inputs > 0).to(device)

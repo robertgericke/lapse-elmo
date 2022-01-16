@@ -64,7 +64,7 @@ def train(worker_id, rank, device, vocab2id, args, kv):
         train_loader = DataLoader(train_dataset, batch_size=args.batch_size * args.world_size * args.workers_per_node, collate_fn=collate_fn)
         train_iterator = PrefetchIterator(args.localize_ahead, train_loader)
         for i, word_ids in enumerate(train_iterator):
-            elmo.pullDenseParameters()
+            elmo.pull_dense_parameters_async()
             elmo_representation, word_mask = elmo(word_ids)
             mask = word_mask.clone()
             mask[:, 0] = False
