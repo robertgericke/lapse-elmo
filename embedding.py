@@ -24,6 +24,9 @@ class PSEmbedding(torch.nn.Module):
         self.num_embeddings = num_embeddings
         self.embedding_dim = embedding_dim
         self.opt = opt
+        self._timestamps = []
+        self._embeddings = None
+        self._accumulator = None
         self._initEmbeddings(pad_zero)
 
     def _initEmbeddings(self, pad_zero: bool):
@@ -32,26 +35,32 @@ class PSEmbedding(torch.nn.Module):
         init.normal_(values)
         if pad_zero:
             values[0,:] = 0 # 0 embedding
-        ts = self.kv.set(keys, values)
-        ts = self.kv.set(keys+self.num_embeddings, torch.full(values.size(), self.opt.initial_accumulator_value, dtype=torch.float32))
+        self.kv.set(keys, values)
+        self.kv.set(keys+self.num_embeddings, torch.full(values.size(), self.opt.initial_accumulator_value, dtype=torch.float32))
+
+    def pull_async(self, keys: torch.Tensor):
+        keys_embeddings = torch.flatten(keys + self.key_offset)
+        keys_accumulator = keys_embeddings + self.num_embeddings
+        size = keys.size() + (self.embedding_dim,)
+        self._embeddings = torch.empty(size, dtype=torch.float32)
+        self._accumulator = torch.empty(size, dtype=torch.float32)
+        self._timestamps.append(self.kv.pull(keys_embeddings, self._embeddings))
+        self._timestamps.append(self.kv.pull(keys_accumulator, self._accumulator))
 
     def forward(self, keys: torch.Tensor, device=None) -> torch.Tensor:
-        keys = keys + self.key_offset
-        size = keys.size() + (self.embedding_dim,)
-        embeddings = torch.empty(size, dtype=torch.float32)
-        accumulators = torch.empty(size, dtype=torch.float32)
-        ts1 = self.kv.pull(keys.flatten(), embeddings)
-        ts2 = self.kv.pull(keys.flatten()+self.num_embeddings, accumulators)
-        self.kv.wait(ts1)
-        self.kv.wait(ts2)
-        embeddings = embeddings.to(device=device)
-        accumulators = accumulators
+        if not self._timestamps:
+            self.pull_async(keys)
+        while self._timestamps:
+            self.kv.wait(self._timestamps.pop())
+
+        embeddings = self._embeddings.to(device=device)
         embeddings.requires_grad_()
         if self.opt:
-            embeddings.register_hook(self.grad_hook(keys, accumulators, self.opt))
+            embeddings.register_hook(self.grad_hook(keys, self._accumulator, self.opt))
         return embeddings
         
     def grad_hook(self, keys: torch.Tensor, accumulators:torch.Tensor, optimizer: PSOptimizer) -> torch.Tensor:
+        keys += self.key_offset
         def hook(grad: torch.Tensor) -> torch.Tensor:
             update_embeddings, update_accumulators = optimizer.update(grad.cpu(), accumulators)
             self.kv.push(keys.flatten(), update_embeddings)

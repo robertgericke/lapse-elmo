@@ -116,6 +116,10 @@ class PSElmo(torch.nn.Module):
             return grad
         return hook
 
+    def pull_dense_and_embeddings_async(self, keys: torch.Tensor,):
+        self.word_embedding.pull_async(keys)
+        self.pull_dense_parameters_async()
+
     def pull_dense_parameters_async(self):
         with torch.no_grad():
             for i, (name, param) in enumerate(self.named_parameters()):
@@ -125,9 +129,8 @@ class PSElmo(torch.nn.Module):
 
     def wait_and_load_pulled_parameters(self):
         if self._timestamps:
-            for ts in self._timestamps:
-                self.kv.wait(ts)
-            self._timestamps = []
+            while self._timestamps:
+                self.kv.wait(self._timestamps.pop())
             with torch.no_grad():
                 for i, (name, param) in enumerate(self.named_parameters()):
                     key = torch.tensor([2*i+self._lstm_offset])
