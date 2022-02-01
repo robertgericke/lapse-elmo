@@ -59,20 +59,11 @@ def train(worker_id, rank, device, vocab2id, args, kv):
 
     for epoch in range(args.epochs):
         # set up training data
-        collate_fn = partial(collate, kv, worker_id, vocab2id, args)
+        collate_fn = partial(prepare_batch, kv, worker_id, vocab2id, elmo, classifier, True, args)
         train_dataset = OneBillionWordIterableDataset(args.dataset)
         train_loader = DataLoader(train_dataset, batch_size=args.batch_size * args.world_size * args.workers_per_node, collate_fn=collate_fn)
         train_iterator = PrefetchIterator(args.localize_ahead, train_loader)
-        for i, word_ids in enumerate(train_iterator):
-            mask = word_ids > 0
-            mask[:, 0] = False
-            mask_rolled = mask.roll(-1, 1)
-            targets_forward = word_ids[mask]
-            targets_backward = word_ids[mask_rolled]
-            targets = torch.cat((targets_forward, targets_backward))
-            targets -= 1 # offset 1-based token ids to 0-based sampling ids
-            samples, target_expected_count, sampled_expected_count = classifier.log_uniform_candidate_sampler(targets)
-
+        for i, (word_ids, mask, mask_rolled, targets, samples, target_expected_count, sampled_expected_count) in enumerate(train_iterator):
             elmo.pull_dense_and_embeddings_async(word_ids)
             classifier.pull_async(targets, samples)
 
@@ -133,6 +124,26 @@ def collate(kv, worker_id, vocab2id, args, batch):
     word_ids = batch_to_word_ids(worker_split, vocab2id, args.max_sequence_length)
     kv.localize(word_ids.flatten())
     return word_ids
+
+def prepare_batch(kv, worker_id, vocab2id, elmo, classifier, sample, args, batch):
+    worker_split = batch[worker_id::args.world_size * args.workers_per_node]
+    word_ids = batch_to_word_ids(worker_split, vocab2id, args.max_sequence_length)
+    kv.localize(word_ids.flatten())
+
+    mask = word_ids > 0
+    mask[:, 0] = False
+    mask_rolled = mask.roll(-1, 1)
+    targets_forward = word_ids[mask]
+    targets_backward = word_ids[mask_rolled]
+    targets = torch.cat((targets_forward, targets_backward))
+    targets -= 1 # offset 1-based token ids to 0-based sampling ids
+
+    if not sample:
+        return word_ids, mask, mask_rolled, targets
+
+    samples, target_expected_count, sampled_expected_count = classifier.log_uniform_candidate_sampler(targets)
+
+    return word_ids, mask, mask_rolled, targets, samples, target_expected_count, sampled_expected_count
 
 def init_scheduler(dummy, args):
     os.environ['DMLC_NUM_SERVER'] = str(args.world_size)
