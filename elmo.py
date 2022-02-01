@@ -7,6 +7,7 @@ from torch.nn import Dropout, Parameter
 from typing import List
 import lapse
 import functools
+import sys
 
 
 def rgetattr(obj, path): # recursive getattr: eg. elmo.scalar_mix.gamma
@@ -33,20 +34,6 @@ class PSElmo(torch.nn.Module):
         lens_lstm = PSElmo._lens_lstm(embedding_dim, lstm_cell_size, num_layers)
         lens_scalar_mix = PSElmo._lens_scalar_mix(num_layers)
         return torch.cat((lens_embedding, lens_lstm, lens_scalar_mix))
-
-    def _hotspots_embedding(num_keys, num_tokens):
-        embeddings = torch.tensor(range(num_keys+1))
-        accumulators = torch.tensor(range(num_tokens, num_tokens+num_keys+1))
-        return torch.cat((embeddings,accumulators))
-
-    def _hotspots_dense(num_layers):
-        num_parameters = len(PSElmo._lens_lstm(1, 1, num_layers)) + len(PSElmo._lens_scalar_mix(num_layers))
-        return torch.tensor(range(num_parameters))
-
-    def hotspots(num_keys, num_tokens, num_layers):
-        hotspots_embedding = PSElmo._hotspots_embedding(num_keys, num_tokens)
-        hotspots_dense = PSElmo._hotspots_dense(num_layers) + len(PSElmo._lens_embedding(num_tokens, 1))
-        return torch.cat((hotspots_embedding, hotspots_dense))
 
     def __init__(
         self,
@@ -115,6 +102,14 @@ class PSElmo(torch.nn.Module):
             self.kv.push(key+1, update_accumulator)
             return grad
         return hook
+
+    def intent_embeddings(self, keys: torch.Tensor, start, stop = 0):
+        self.word_embedding.intent(keys, start, stop)
+
+    def intent_dense_parameters(self):
+        num_parameters = 2*sum(1 for i in self.parameters())
+        keys = torch.arange(num_parameters) + self._lstm_offset
+        self.kv.intent(keys, 0, sys.maxsize)
 
     def pull_dense_and_embeddings_async(self, keys: torch.Tensor,):
         self.word_embedding.pull_async(keys)

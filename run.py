@@ -57,6 +57,9 @@ def train(worker_id, rank, device, vocab2id, args, kv):
     elmo.to(device)
     classifier.to(device)
 
+    # signal permanent intent on dense parameters
+    elmo.intent_dense_parameters()
+
     for epoch in range(args.epochs):
         # set up training data
         collate_fn = partial(prepare_batch, kv, worker_id, vocab2id, elmo, classifier, True, args)
@@ -75,6 +78,7 @@ def train(worker_id, rank, device, vocab2id, args, kv):
             loss = classifier(context, targets, samples, target_expected_count, sampled_expected_count) / targets.size(0)
             loss.backward()
             print('[%6d] loss: %.3f' % (i, loss.item()))
+            kv.advance_clock()
 
         kv.barrier() # synchronize workers
         if args.testset:
@@ -126,9 +130,12 @@ def collate(kv, worker_id, vocab2id, args, batch):
     return word_ids
 
 def prepare_batch(kv, worker_id, vocab2id, elmo, classifier, sample, args, batch):
+    clock = kv.current_clock()
+    target_time = clock + args.localize_ahead
+
     worker_split = batch[worker_id::args.world_size * args.workers_per_node]
     word_ids = batch_to_word_ids(worker_split, vocab2id, args.max_sequence_length)
-    kv.localize(word_ids.flatten())
+    elmo.intent_embeddings(word_ids.flatten(), target_time)
 
     mask = word_ids > 0
     mask[:, 0] = False
@@ -142,6 +149,7 @@ def prepare_batch(kv, worker_id, vocab2id, elmo, classifier, sample, args, batch
         return word_ids, mask, mask_rolled, targets
 
     samples, target_expected_count, sampled_expected_count = classifier.log_uniform_candidate_sampler(targets)
+    classifier.intent(targets, samples, target_time)
 
     return word_ids, mask, mask_rolled, targets, samples, target_expected_count, sampled_expected_count
 
@@ -162,14 +170,7 @@ def init_node(local_rank, lens, vocab2id, args):
     os.environ['DMLC_PS_ROOT_PORT'] = args.root_port
     
     lapse.setup(args.num_keys, args.workers_per_node)
-    if args.hotspots < 0:
-        s = lapse.Server(lens)
-    else:
-        classifier_offset = len(PSElmo.lens(args.num_tokens, args.embedding_dim, args.cell_size, args.layers))
-        hotspots_elmo = PSElmo.hotspots(args.hotspots, args.num_tokens, args.layers)
-        hotspots_classifier = PSSampledSoftmaxLoss.hotspots(args.hotspots, args.num_tokens) + classifier_offset
-        hotspots = torch.cat((hotspots_elmo, hotspots_classifier))
-        s = lapse.Server(lens, hotspots)
+    s = lapse.Server(lens)
 
     try:
         rank = s.my_rank()
@@ -182,7 +183,7 @@ def init_node(local_rank, lens, vocab2id, args):
     threads = []
     for w in range(args.workers_per_node):
         worker_id = rank * args.workers_per_node + w
-        kv = lapse.Worker(0, w+1, s)
+        kv = lapse.Worker(0, w, s)
 
         # assign training device to worker
         if args.cuda:

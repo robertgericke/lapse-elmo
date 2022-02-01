@@ -38,6 +38,12 @@ class PSEmbedding(torch.nn.Module):
         self.kv.set(keys, values)
         self.kv.set(keys+self.num_embeddings, torch.full(values.size(), self.opt.initial_accumulator_value, dtype=torch.float32))
 
+    def intent(self, keys: torch.Tensor, start, stop = 0):
+        keys_embeddings = torch.flatten(keys + self.key_offset)
+        keys_accumulator = keys_embeddings + self.num_embeddings
+        self.kv.intent(keys_embeddings, start, stop)
+        self.kv.intent(keys_accumulator, start, stop)
+
     def pull_async(self, keys: torch.Tensor):
         keys_embeddings = torch.flatten(keys + self.key_offset)
         keys_accumulator = keys_embeddings + self.num_embeddings
