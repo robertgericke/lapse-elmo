@@ -64,23 +64,25 @@ def train(worker_id, rank, device, vocab2id, args, kv):
         train_loader = DataLoader(train_dataset, batch_size=args.batch_size * args.world_size * args.workers_per_node, collate_fn=collate_fn)
         train_iterator = PrefetchIterator(args.localize_ahead, train_loader)
         for i, word_ids in enumerate(train_iterator):
-            elmo.pull_dense_and_embeddings_async(word_ids)
-            elmo_representation, word_mask = elmo(word_ids)
-            mask = word_mask.clone()
+            mask = word_ids > 0
             mask[:, 0] = False
             mask_rolled = mask.roll(-1, 1)
-
             targets_forward = word_ids[mask]
             targets_backward = word_ids[mask_rolled]
             targets = torch.cat((targets_forward, targets_backward))
             targets -= 1 # offset 1-based token ids to 0-based sampling ids
+            samples, target_expected_count, sampled_expected_count = classifier.log_uniform_candidate_sampler(targets)
+
+            elmo.pull_dense_and_embeddings_async(word_ids)
+            classifier.pull_async(targets, samples)
+
+            elmo_representation, word_mask = elmo(word_ids)
             context_forward = elmo_representation[:, :, :args.embedding_dim][mask_rolled]
             context_backward = elmo_representation[:, :, args.embedding_dim:][mask]
             context = torch.cat((context_forward, context_backward))
 
-            loss = classifier(context, targets) / targets.size(0)
+            loss = classifier(context, targets, samples, target_expected_count, sampled_expected_count) / targets.size(0)
             loss.backward()
-            #elmo.pushUpdates()
             print('[%6d] loss: %.3f' % (i, loss.item()))
 
         kv.barrier() # synchronize workers
