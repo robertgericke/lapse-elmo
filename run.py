@@ -57,16 +57,13 @@ def train(worker_id, rank, device, vocab2id, args, kv):
     elmo.to(device)
     classifier.to(device)
 
-    # signal permanent intent on dense parameters
-    elmo.intent_dense_parameters()
-
     for epoch in range(args.epochs):
         # set up training data
         collate_fn = partial(prepare_batch, kv, worker_id, vocab2id, elmo, classifier, True, args)
         train_dataset = OneBillionWordIterableDataset(args.dataset)
         train_loader = DataLoader(train_dataset, batch_size=args.batch_size * args.world_size * args.workers_per_node, collate_fn=collate_fn)
         train_iterator = PrefetchIterator(args.localize_ahead, train_loader)
-        for i, (word_ids, mask, mask_rolled, targets, samples, target_expected_count, sampled_expected_count) in enumerate(train_iterator):
+        for i, (word_ids, mask, mask_rolled, targets, samples) in enumerate(train_iterator):
             elmo.pull_dense_and_embeddings_async(word_ids)
             classifier.pull_async(targets, samples)
 
@@ -75,7 +72,7 @@ def train(worker_id, rank, device, vocab2id, args, kv):
             context_backward = elmo_representation[:, :, args.embedding_dim:][mask]
             context = torch.cat((context_forward, context_backward))
 
-            loss = classifier(context, targets, samples, target_expected_count, sampled_expected_count) / targets.size(0)
+            loss = classifier(context, targets, samples) / targets.size(0)
             loss.backward()
             print('[%6d] loss: %.3f' % (i, loss.item()))
             kv.advance_clock()
@@ -148,10 +145,9 @@ def prepare_batch(kv, worker_id, vocab2id, elmo, classifier, sample, args, batch
     if not sample:
         return word_ids, mask, mask_rolled, targets
 
-    samples, target_expected_count, sampled_expected_count = classifier.log_uniform_candidate_sampler(targets)
-    classifier.intent(targets, samples, target_time)
+    samples = classifier.sample()
 
-    return word_ids, mask, mask_rolled, targets, samples, target_expected_count, sampled_expected_count
+    return word_ids, mask, mask_rolled, targets, samples
 
 def init_scheduler(dummy, args):
     os.environ['DMLC_NUM_SERVER'] = str(args.world_size)

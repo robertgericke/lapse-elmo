@@ -38,18 +38,18 @@ class PSSampledSoftmaxLoss(torch.nn.Module):
         all_ids = torch.cat([targets, samples], dim=0)
         self.embedding.intent(all_ids, start, stop)
 
-    def pull_async(self, targets: torch.Tensor, samples = torch.empty((0))):
+    def pull_async(self, targets: torch.Tensor, samples=torch.empty((0))):
         all_ids = torch.cat([targets, samples], dim=0)
         self.embedding.pull_async(all_ids)
 
-    def forward(self, embeddings: torch.Tensor, targets: torch.Tensor, samples: torch.Tensor = None, target_expected_count = None, sampled_expected_count = None) -> torch.Tensor:
+    def forward(self, embeddings: torch.Tensor, targets: torch.Tensor, samples: torch.Tensor = None, num_tries=None, unique=False) -> torch.Tensor:
         if embeddings.shape[0] == 0: # empty batch
             return torch.tensor(0.0, device=embeddings.device)
 
         if not self.training:
             return self._forward_eval(embeddings, targets)
         else:
-            return self._forward_train(embeddings, targets, samples, target_expected_count, sampled_expected_count)
+            return self._forward_train(embeddings, targets, samples, num_tries, unique)
 
     def _forward_eval(self, embeddings: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
         e = self.embedding(torch.tensor(range(self.embedding.num_embeddings)), embeddings.device)
@@ -60,7 +60,10 @@ class PSSampledSoftmaxLoss(torch.nn.Module):
 
         return torch.nn.functional.nll_loss(log_softmax, targets.to(embeddings.device), reduction="sum")
 
-    def _forward_train(self, embeddings: torch.Tensor, targets: torch.Tensor, samples: torch.Tensor, target_expected_count, sampled_expected_count) -> torch.Tensor:
+    def _forward_train(self, embeddings: torch.Tensor, targets: torch.Tensor, samples: torch.Tensor, num_tries=None, unique=False) -> torch.Tensor:
+        target_expected_count = self.expected_count(targets, num_tries=None, unique=False)
+        sampled_expected_count = self.expected_count(samples, num_tries=None, unique=False)
+
         # Get the softmax weights (so we can compute logits)
         all_ids = torch.cat([targets, samples], dim=0)
         all_e = self.embedding(all_ids, embeddings.device)
@@ -111,41 +114,27 @@ class PSSampledSoftmaxLoss(torch.nn.Module):
         nll_loss = -1.0 * log_softmax[:, 0].sum()
         return nll_loss
 
+    def sample(self, unique=False):
+        if unique: # no sample will appear more than once
+            np_sampled_ids, num_tries = choice_func(self._num_words, self.num_samples)
+            return torch.from_numpy(np_sampled_ids), num_tries
+        else:
+            log_samples = np.random.rand(self.num_samples) * np.log(self._num_words + 1)
+            samples = np.exp(log_samples).astype("int64") - 1
+            return torch.from_numpy(np.clip(samples, a_min=0, a_max=self._num_words - 1))
 
-    def log_uniform_candidate_sampler(self, targets, choice_func=_choice):
-        # returns sampled, true_expected_count, sampled_expected_count
-        # targets = (batch_size, )
-        #
-        #  samples = (n_samples, )
-        #  true_expected_count = (batch_size, )
-        #  sampled_expected_count = (n_samples, )
-
+    def expected_count(self, ids, num_tries=None, unique=False):
         # see: https://github.com/tensorflow/tensorflow/blob/master/tensorflow/core/kernels/range_sampler.h
         # https://github.com/tensorflow/tensorflow/blob/master/tensorflow/core/kernels/range_sampler.cc
 
-        # algorithm: keep track of number of tries when doing sampling,
-        #   then expected count is
-        #   -expm1(num_tries * log1p(-p))
-        # = (1 - (1-p)^num_tries) where p is self._probs[id]
-
-        np_sampled_ids, num_tries = choice_func(self._num_words, self.num_samples)
-
-        sampled_ids = torch.from_numpy(np_sampled_ids).to(targets.device)
+        # algorithm: keep track of number of tries when doing sampling, then expected count is:
+        # -expm1(num_tries * log1p(-p)) = (1 - (1-p)^num_tries) where p is self._probs[id]
 
         # Compute expected count = (1 - (1-p)^num_tries) = -expm1(num_tries * log1p(-p))
         # P(class) = (log(class + 2) - log(class + 1)) / log(range_max + 1)
-        target_probs = (
-            torch.log((targets.float() + 2.0) / (targets.float() + 1.0)) / self._log_num_words_p1
-        )
-        target_expected_count = -1.0 * (torch.exp(num_tries * torch.log1p(-target_probs)) - 1.0)
-        sampled_probs = (
-            torch.log((sampled_ids.float() + 2.0) / (sampled_ids.float() + 1.0))
-            / self._log_num_words_p1
-        )
-        sampled_expected_count = -1.0 * (torch.exp(num_tries * torch.log1p(-sampled_probs)) - 1.0)
-
-        sampled_ids.requires_grad_(False)
-        target_expected_count.requires_grad_(False)
-        sampled_expected_count.requires_grad_(False)
-
-        return sampled_ids, target_expected_count, sampled_expected_count
+        probs = torch.log((ids.float() + 2.0) / (ids.float() + 1.0)) / self._log_num_words_p1
+        if unique:
+            expected_count = -1.0 * (torch.exp(num_tries * torch.log1p(-probs)) - 1.0)
+        else:
+            expected_count = probs * self.num_samples
+        return expected_count
