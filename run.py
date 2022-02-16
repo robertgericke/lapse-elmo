@@ -133,6 +133,7 @@ def prepare_batch(kv, worker_id, vocab2id, elmo, classifier, sample, args, batch
     worker_split = batch[worker_id::args.world_size * args.workers_per_node]
     word_ids = batch_to_word_ids(worker_split, vocab2id, args.max_sequence_length)
     elmo.intent_embeddings(word_ids.flatten(), target_time)
+    classifier.intent(word_ids.flatten(), target_time)
 
     mask = word_ids > 0
     mask[:, 0] = False
@@ -146,6 +147,7 @@ def prepare_batch(kv, worker_id, vocab2id, elmo, classifier, sample, args, batch
         return word_ids, mask, mask_rolled, targets
 
     samples = classifier.sample()
+    classifier.intent(samples, target_time)
 
     return word_ids, mask, mask_rolled, targets, samples
 

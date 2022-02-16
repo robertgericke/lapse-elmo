@@ -34,9 +34,8 @@ class PSSampledSoftmaxLoss(torch.nn.Module):
             opt=opt,
         )
 
-    def intent(self, targets: torch.Tensor, samples, start, stop = 0):
-        all_ids = torch.cat([targets, samples], dim=0)
-        self.embedding.intent(all_ids, start, stop)
+    def intent(self, ids, start, stop=0):
+        self.embedding.intent(ids, start, stop)
 
     def pull_async(self, targets: torch.Tensor, samples=torch.empty((0))):
         all_ids = torch.cat([targets, samples], dim=0)

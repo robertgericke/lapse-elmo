@@ -84,7 +84,7 @@ class PSElmo(torch.nn.Module):
         self._parambuffer = {}
         self._accumbuffer = {}
         self._initParameters()
-
+        self.intent_dense_parameters()
 
     def _initParameters(self):
         for i, (name, param) in enumerate(self.named_parameters()):
