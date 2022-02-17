@@ -20,11 +20,11 @@ def rsetattr(obj, path, val): # recursive setattr: eg. elmo.scalar_mix.gamma
 class PSElmo(torch.nn.Module):
 
     def _lens_lstm(embedding_dim, lstm_cell_size, num_layers):
-        layer = [4*lstm_cell_size*embedding_dim, 4*lstm_cell_size*embedding_dim, 4*lstm_cell_size*embedding_dim, 4*lstm_cell_size*embedding_dim, 4*lstm_cell_size, 4*lstm_cell_size, embedding_dim*lstm_cell_size, embedding_dim*lstm_cell_size]
-        return torch.tensor(layer*2*num_layers)
+        layer = [4*lstm_cell_size*embedding_dim, 4*lstm_cell_size*embedding_dim, 4*lstm_cell_size, embedding_dim*lstm_cell_size]
+        return torch.tensor(layer*2*num_layers)*2
 
     def _lens_scalar_mix(num_layers):
-        return torch.tensor([1]*(num_layers+1+1)*2)
+        return torch.tensor([1]*(num_layers+1+1))*2
 
     def _lens_embedding(num_tokens, embedding_dim):
         return PSEmbedding.lens(num_tokens+1, embedding_dim)
@@ -58,7 +58,7 @@ class PSElmo(torch.nn.Module):
         self.word_embedding = PSEmbedding(
             kv=kv,
             key_offset=key_offset,
-            num_embeddings=num_tokens+1, 
+            num_embeddings=num_tokens+1, #one more for zero embedding (no word / blank space)
             embedding_dim=embedding_dim,
             opt=opt,
         )
@@ -81,46 +81,45 @@ class PSElmo(torch.nn.Module):
         self.dropout = Dropout(p=dropout)
         self._lstm_offset = key_offset + len(PSEmbedding.lens(num_tokens+1, embedding_dim))
         self._timestamps = []
-        self._parambuffer = {}
-        self._accumbuffer = {}
+        self._param_buffers = {}
         self._initParameters()
         self.intent_dense_parameters()
 
     def _initParameters(self):
         for i, (name, param) in enumerate(self.named_parameters()):
-            key = torch.tensor([2*i+self._lstm_offset])
-            self._parambuffer[name] = param.clone().detach()
-            self._accumbuffer[name] = torch.full(param.size(), self.opt.initial_accumulator_value, dtype=torch.float32)
-            self.kv.set(key, self._parambuffer[name])
-            self.kv.set(key+1, self._accumbuffer[name])
+            key = torch.tensor([i+self._lstm_offset])
+            self._param_buffers[name] = torch.empty((2,)+param.size())
+            self._param_buffers[name][0] = param.clone().detach()
+            self._param_buffers[name][1] = self.opt.initial_accumulator_value
+            self.kv.set(key, self._param_buffers[name])
             param.register_hook(self.grad_hook(key, name, self.opt))
 
     def grad_hook(self, key: torch.Tensor, name, optimizer: PSOptimizer) -> torch.Tensor:
         def hook(grad: torch.Tensor) -> torch.Tensor:
-            update_parameter, update_accumulator = optimizer.update(grad.cpu(), self._accumbuffer[name])
-            self.kv.push(key, update_parameter)
-            self.kv.push(key+1, update_accumulator)
+            update_parameter, update_accumulator = optimizer.update(grad.cpu(), self._param_buffers[name][1])
+            self._param_buffers[name][0] = update_parameter
+            self._param_buffers[name][1] = update_accumulator
+            self.kv.push(key, self._param_buffers[name])
             return grad
         return hook
 
-    def intent_embeddings(self, keys: torch.Tensor, start, stop = 0):
-        self.word_embedding.intent(keys, start, stop)
+    def intent_embeddings(self, ids: torch.Tensor, start, stop = 0):
+        self.word_embedding.intent(ids, start, stop)
 
     def intent_dense_parameters(self):
-        num_parameters = 2*sum(1 for i in self.parameters())
-        keys = torch.arange(num_parameters) + self._lstm_offset
-        self.kv.intent(keys, 0, sys.maxsize)
+        num_parameters = sum(1 for i in self.parameters())
+        ps_keys = torch.arange(num_parameters) + self._lstm_offset
+        self.kv.intent(ps_keys, 0, sys.maxsize)
 
-    def pull_dense_and_embeddings_async(self, keys: torch.Tensor,):
-        self.word_embedding.pull_async(keys)
+    def pull_dense_and_embeddings_async(self, ids: torch.Tensor,):
+        self.word_embedding.pull_async(ids)
         self.pull_dense_parameters_async()
 
     def pull_dense_parameters_async(self):
         with torch.no_grad():
             for i, (name, param) in enumerate(self.named_parameters()):
-                key = torch.tensor([2*i+self._lstm_offset])
-                self._timestamps.append(self.kv.pull(key, self._parambuffer[name]))
-                self._timestamps.append(self.kv.pull(key+1, self._accumbuffer[name]))
+                key = torch.tensor([i+self._lstm_offset])
+                self._timestamps.append(self.kv.pull(key, self._param_buffers[name]))
 
     def wait_and_load_pulled_parameters(self):
         if self._timestamps:
@@ -128,8 +127,8 @@ class PSElmo(torch.nn.Module):
                 self.kv.wait(self._timestamps.pop())
             with torch.no_grad():
                 for i, (name, param) in enumerate(self.named_parameters()):
-                    key = torch.tensor([2*i+self._lstm_offset])
-                    newParam = Parameter(self._parambuffer[name].to(param.device))
+                    key = torch.tensor([i+self._lstm_offset])
+                    newParam = Parameter(self._param_buffers[name][0].to(param.device))
                     newParam.register_hook(self.grad_hook(key, name, self.opt))
                     rsetattr(self, name, newParam)
 
