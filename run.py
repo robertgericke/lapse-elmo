@@ -27,6 +27,7 @@ def run_worker(worker_id, rank, device, vocab2id, args, kv):
 
 
 def train(worker_id, rank, device, vocab2id, args, kv):
+    kv.barrier()
     print(f"Worker {worker_id} training on {device}")
     optimizer = PSAdagrad(
         lr = 0.2,
@@ -52,7 +53,7 @@ def train(worker_id, rank, device, vocab2id, args, kv):
         num_samples=args.samples,
         opt=optimizer,
     )
-    
+
     # move model to device
     elmo.to(device)
     classifier.to(device)
@@ -63,16 +64,18 @@ def train(worker_id, rank, device, vocab2id, args, kv):
         train_dataset = OneBillionWordIterableDataset(args.dataset)
         train_loader = DataLoader(train_dataset, batch_size=args.batch_size * args.world_size * args.workers_per_node, collate_fn=collate_fn)
         train_iterator = PrefetchIterator(args.localize_ahead, train_loader)
-        for i, (word_ids, mask, mask_rolled, targets, samples) in enumerate(train_iterator):
+        for i, (word_ids, mask, mask_rolled, targets, sample_id) in enumerate(train_iterator):
             elmo.pull_dense_and_embeddings_async(word_ids)
-            classifier.pull_async(targets, samples)
+            classifier.pull_async(targets)
+            ts_samples, sample_ids, samples = pull_samples_async(kv, sample_id, classifier, optimizer, args)
 
             elmo_representation, word_mask = elmo(word_ids)
             context_forward = elmo_representation[:, :, :args.embedding_dim][mask_rolled]
             context_backward = elmo_representation[:, :, args.embedding_dim:][mask]
             context = torch.cat((context_forward, context_backward))
 
-            loss = classifier(context, targets, samples) / targets.size(0)
+            kv.wait(ts_samples)
+            loss = classifier(context, targets, sample_ids, samples) / targets.size(0)
             loss.backward()
             print('[%6d] loss: %.3f' % (i, loss.item()))
             kv.advance_clock()
@@ -146,10 +149,30 @@ def prepare_batch(kv, worker_id, vocab2id, elmo, classifier, sample, args, batch
     if not sample:
         return word_ids, mask, mask_rolled, targets
 
-    samples = classifier.sample()
-    classifier.intent(samples, target_time)
+    sample_id = kv.PrepareSample(args.samples, target_time)
 
-    return word_ids, mask, mask_rolled, targets, samples
+    return word_ids, mask, mask_rolled, targets, sample_id
+
+def pull_samples_async(kv, sample_id, classifier, opt, args):
+    keys = torch.empty((args.samples), dtype=torch.long)
+    vals = torch.empty((args.samples, 2, args.embedding_dim+1))
+    ts = kv.PullSample(sample_id, keys, vals)
+    ids = keys - classifier.embedding.key_offset
+    samples = vals[:,0,:]
+    samples.requires_grad_()
+    accumulators = vals[:,1,:]
+    samples.register_hook(grad_hook(kv, keys, vals, accumulators, opt))
+
+    return ts, ids, samples
+
+def grad_hook(kv, keys: torch.Tensor, vals: torch.Tensor, accumulators:torch.Tensor, optimizer) -> torch.Tensor:
+    def hook(grad: torch.Tensor) -> torch.Tensor:
+        update_embeddings, update_accumulators = optimizer.update(grad.cpu(), accumulators)
+        vals[:,0,:] = update_embeddings
+        vals[:,1,:] = update_accumulators
+        kv.push(keys, vals)
+        return grad
+    return hook
 
 def init_scheduler(dummy, args):
     os.environ['DMLC_NUM_SERVER'] = str(args.world_size)
@@ -168,20 +191,22 @@ def init_node(local_rank, lens, vocab2id, args):
     os.environ['DMLC_PS_ROOT_PORT'] = args.root_port
     
     lapse.setup(args.num_keys, args.workers_per_node)
-    s = lapse.Server(lens)
-
-    try:
-        rank = s.my_rank()
-    except:
-        rank = local_rank
-        print("Failed to fetch the global rank, using local rank instead.")
-
+    server = lapse.Server(lens)
+    rank = server.my_rank()
     print(f"Started server with rank {rank}.")
+
+    # make sure all servers are set up
+    server.barrier()
+
+    # setup sampling
+    sample_min = len(PSElmo.lens(args.num_tokens, args.embedding_dim, args.cell_size, args.layers))
+    sample_max = sample_min + args.num_tokens - 1
+    server.enable_sampling_support(sample_min, sample_max)
 
     threads = []
     for w in range(args.workers_per_node):
         worker_id = rank * args.workers_per_node + w
-        kv = lapse.Worker(0, w, s)
+        kv = lapse.Worker(0, w, server)
 
         # assign training device to worker
         if args.cuda:
@@ -203,7 +228,7 @@ def init_node(local_rank, lens, vocab2id, args):
         t.join()
 
     # shutdown lapse node
-    s.shutdown()
+    server.shutdown()
 
 
 def kill_processes(signal_received, frame):

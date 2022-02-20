@@ -37,43 +37,38 @@ class PSSampledSoftmaxLoss(torch.nn.Module):
     def intent(self, ids, start, stop=0):
         self.embedding.intent(ids, start, stop)
 
-    def pull_async(self, targets: torch.Tensor, samples=torch.empty((0))):
-        all_ids = torch.cat([targets, samples], dim=0)
-        self.embedding.pull_async(all_ids)
+    def pull_async(self, ids: torch.Tensor):
+        self.embedding.pull_async(ids)
 
-    def forward(self, embeddings: torch.Tensor, targets: torch.Tensor, samples: torch.Tensor = None, num_tries=None, unique=False) -> torch.Tensor:
+    def forward(self, embeddings: torch.Tensor, target_ids: torch.Tensor, sample_ids: torch.Tensor = None, samples: torch.Tensor = None, num_tries=None, unique=False) -> torch.Tensor:
         if embeddings.shape[0] == 0: # empty batch
             return torch.tensor(0.0, device=embeddings.device)
 
         if not self.training:
-            return self._forward_eval(embeddings, targets)
+            return self._forward_eval(embeddings, target_ids)
         else:
-            return self._forward_train(embeddings, targets, samples, num_tries, unique)
+            return self._forward_train(embeddings, target_ids, sample_ids, samples, num_tries, unique)
 
-    def _forward_eval(self, embeddings: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+    def _forward_eval(self, embeddings: torch.Tensor, target_ids: torch.Tensor) -> torch.Tensor:
         e = self.embedding(torch.tensor(range(self.embedding.num_embeddings)), embeddings.device)
         w = e[:,1:]
         b = e[:,:1].flatten()
 
         log_softmax = torch.nn.functional.log_softmax(torch.matmul(embeddings, w.t()) + b, dim=-1)
 
-        return torch.nn.functional.nll_loss(log_softmax, targets.to(embeddings.device), reduction="sum")
+        return torch.nn.functional.nll_loss(log_softmax, target_ids.to(embeddings.device), reduction="sum")
 
-    def _forward_train(self, embeddings: torch.Tensor, targets: torch.Tensor, samples: torch.Tensor, num_tries=None, unique=False) -> torch.Tensor:
-        target_expected_count = self.expected_count(targets, num_tries=None, unique=False)
-        sampled_expected_count = self.expected_count(samples, num_tries=None, unique=False)
+    def _forward_train(self, embeddings: torch.Tensor, target_ids: torch.Tensor, sample_ids: torch.Tensor, samples: torch.Tensor, num_tries=None, unique=False) -> torch.Tensor:
+        target_expected_count = self.expected_count(target_ids, num_tries=None, unique=False)
+        sampled_expected_count = self.expected_count(sample_ids, num_tries=None, unique=False)
 
         # Get the softmax weights (so we can compute logits)
-        all_ids = torch.cat([targets, samples], dim=0)
-        all_e = self.embedding(all_ids, embeddings.device)
-        all_w = all_e[:,1:]
-        all_b = all_e[:,:1].flatten()
-
-        batch_size = targets.size(0)
-        true_w = all_w[:batch_size, :]
-        sampled_w = all_w[batch_size:, :]
-        true_b = all_b[:batch_size]
-        sampled_b = all_b[batch_size:]
+        true_e = self.embedding(target_ids, embeddings.device)
+        true_w = true_e[:,1:]
+        true_b = true_e[:,:1].flatten()
+        sampled_e = samples.to(embeddings.device)
+        sampled_w = sampled_e[:,1:]
+        sampled_b = sampled_e[:,:1].flatten()
 
         # compute the logits and remove log expected counts
         # [batch_size, ]
@@ -98,7 +93,7 @@ class PSSampledSoftmaxLoss(torch.nn.Module):
         # softmax, so set the sampled logits of true values to a large
         # negative number
         # [batch_size, n_samples]
-        true_in_sample_mask = samples == targets.unsqueeze(1)
+        true_in_sample_mask = sample_ids == target_ids.unsqueeze(1)
         masked_sampled_logits = sampled_logits.masked_fill(true_in_sample_mask.to(embeddings.device), -10000.0)
         # now concat the true logits as index 0
         # [batch_size, n_samples + 1]
