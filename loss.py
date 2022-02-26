@@ -45,14 +45,13 @@ class PSSampledSoftmaxLoss(torch.nn.Module):
             return torch.tensor(0.0, device=embeddings.device)
 
         if not self.training:
-            return self._forward_eval(embeddings, target_ids)
+            return self._forward_eval(embeddings, target_ids, samples)
         else:
             return self._forward_train(embeddings, target_ids, sample_ids, samples, num_tries, unique)
 
-    def _forward_eval(self, embeddings: torch.Tensor, target_ids: torch.Tensor) -> torch.Tensor:
-        e = self.embedding(torch.tensor(range(self.embedding.num_embeddings)), embeddings.device)
-        w = e[:,1:]
-        b = e[:,:1].flatten()
+    def _forward_eval(self, embeddings: torch.Tensor, target_ids: torch.Tensor, parameters) -> torch.Tensor:
+        w = parameters[:,1:]
+        b = parameters[:,:1].flatten()
 
         log_softmax = torch.nn.functional.log_softmax(torch.matmul(embeddings, w.t()) + b, dim=-1)
 

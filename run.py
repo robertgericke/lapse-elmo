@@ -96,6 +96,8 @@ def train(worker_id, rank, device, vocab2id, args, kv):
                 test_loader = DataLoader(test_dataset, batch_size=1 * args.world_size * args.workers_per_node, collate_fn=test_collate)
                 test_iterator = PrefetchIterator(args.localize_ahead, test_loader)
                 elmo.pull_dense_parameters_async()
+                all_ids = torch.tensor(range(args.num_tokens))
+                all_weights = classifier.embedding(all_ids, device)
                 for i, (word_ids, mask, mask_rolled, targets) in enumerate(test_iterator):
                     elmo.word_embedding.pull_async(word_ids)
 
@@ -104,7 +106,7 @@ def train(worker_id, rank, device, vocab2id, args, kv):
                     context_backward = elmo_representation[:, :, args.embedding_dim:][mask]
                     context = torch.cat((context_forward, context_backward))
 
-                    loss = classifier(context, targets) / targets.size(0)
+                    loss = classifier(context, targets, samples=all_weights) / targets.size(0)
                     acc_loss = acc_loss + loss
                     num_loss = num_loss + 1
                     print('[%6d] loss: %.3f' % (i, loss.item()))
@@ -142,7 +144,6 @@ def prepare_batch(kv, worker_id, vocab2id, elmo, classifier, sample, args, batch
     targets -= 1 # offset 1-based token ids to 0-based sampling ids
 
     if not sample:
-        classifier.intent(torch.LongTensor(range(args.num_tokens)), target_time)
         return word_ids, mask, mask_rolled, targets
 
     classifier.intent(word_ids.flatten(), target_time)
