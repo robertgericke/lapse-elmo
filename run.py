@@ -60,9 +60,9 @@ def train(worker_id, rank, device, vocab2id, args, kv):
 
     for epoch in range(args.epochs):
         # set up training data
-        collate_fn = partial(prepare_batch, kv, worker_id, vocab2id, elmo, classifier, True, args)
+        train_collate = partial(prepare_batch, kv, worker_id, vocab2id, elmo, classifier, True, args)
         train_dataset = OneBillionWordIterableDataset(args.dataset)
-        train_loader = DataLoader(train_dataset, batch_size=args.batch_size * args.world_size * args.workers_per_node, collate_fn=collate_fn)
+        train_loader = DataLoader(train_dataset, batch_size=args.batch_size * args.world_size * args.workers_per_node, collate_fn=train_collate)
         train_iterator = PrefetchIterator(args.localize_ahead, train_loader)
         for i, (word_ids, mask, mask_rolled, targets, sample_id) in enumerate(train_iterator):
             elmo.pull_dense_and_embeddings_async(word_ids)
@@ -82,29 +82,24 @@ def train(worker_id, rank, device, vocab2id, args, kv):
 
         kv.barrier() # synchronize workers
         if args.testset:
-            loss_key = torch.tensor([args.num_parameters-1])
+            loss_key = torch.tensor([kv.num_keys-1])
             loss_val = torch.zeros((1), dtype=torch.float32)
             kv.set(loss_key, loss_val)
-            elmo.pullDenseParameters()
+            elmo.pull_dense_parameters_async()
             elmo.eval()
             classifier.eval()
             acc_loss = 0
             num_loss = 0
             with torch.no_grad():
+                test_collate = partial(prepare_batch, kv, worker_id, vocab2id, elmo, classifier, False, args)
                 test_dataset = OneBillionWordIterableDataset(args.testset)
-                test_loader = DataLoader(test_dataset, batch_size=1 * args.world_size * args.workers_per_node, collate_fn=collate_fun)
-                test_iterator = PrefetchIterator(args.num_batches, test_loader)
-                for i, batch in enumerate(test_iterator):
-                    word_ids = batch_to_word_ids(batch[worker_id::args.world_size * args.workers_per_node], vocab2id, args.max_sequence_length)
-                    elmo_representation, word_mask = elmo(word_ids)
-                    mask = word_mask.clone()
-                    mask[:, 0] = False
-                    mask_rolled = mask.roll(-1, 1)
+                test_loader = DataLoader(test_dataset, batch_size=1 * args.world_size * args.workers_per_node, collate_fn=test_collate)
+                test_iterator = PrefetchIterator(args.localize_ahead, test_loader)
+                elmo.pull_dense_parameters_async()
+                for i, (word_ids, mask, mask_rolled, targets) in enumerate(test_iterator):
+                    elmo.word_embedding.pull_async(word_ids)
 
-                    targets_forward = word_ids[mask]
-                    targets_backward = word_ids[mask_rolled]
-                    targets = torch.cat((targets_forward, targets_backward))
-                    targets -= 1 # offset 1-based token ids to 0-based sampling ids
+                    elmo_representation, word_mask = elmo(word_ids)
                     context_forward = elmo_representation[:, :, :args.embedding_dim][mask_rolled]
                     context_backward = elmo_representation[:, :, args.embedding_dim:][mask]
                     context = torch.cat((context_forward, context_backward))
@@ -113,6 +108,7 @@ def train(worker_id, rank, device, vocab2id, args, kv):
                     acc_loss = acc_loss + loss
                     num_loss = num_loss + 1
                     print('[%6d] loss: %.3f' % (i, loss.item()))
+                    kv.advance_clock()
 
             elmo.train()
             classifier.train()
@@ -136,7 +132,6 @@ def prepare_batch(kv, worker_id, vocab2id, elmo, classifier, sample, args, batch
     worker_split = batch[worker_id::args.world_size * args.workers_per_node]
     word_ids = batch_to_word_ids(worker_split, vocab2id, args.max_sequence_length)
     elmo.intent_embeddings(word_ids.flatten(), target_time)
-    classifier.intent(word_ids.flatten(), target_time)
 
     mask = word_ids > 0
     mask[:, 0] = False
@@ -147,8 +142,10 @@ def prepare_batch(kv, worker_id, vocab2id, elmo, classifier, sample, args, batch
     targets -= 1 # offset 1-based token ids to 0-based sampling ids
 
     if not sample:
+        classifier.intent(torch.LongTensor(range(args.num_tokens)), target_time)
         return word_ids, mask, mask_rolled, targets
 
+    classifier.intent(word_ids.flatten(), target_time)
     sample_id = kv.PrepareSample(args.samples, target_time)
 
     return word_ids, mask, mask_rolled, targets, sample_id
