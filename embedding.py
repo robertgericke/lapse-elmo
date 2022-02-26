@@ -59,17 +59,14 @@ class PSEmbedding(torch.nn.Module):
             self.kv.wait(self._timestamps.pop())
 
         embeddings = self._embeddings().to(device=device).requires_grad_()
-        accumulators = self._accumulators()
         if self.opt:
-            embeddings.register_hook(self.grad_hook(ids, accumulators, self.opt))
+            embeddings.register_hook(self.grad_hook(ids))
         return embeddings
         
-    def grad_hook(self, ids: torch.Tensor, accumulators:torch.Tensor, optimizer: PSOptimizer) -> torch.Tensor:
+    def grad_hook(self, ids: torch.Tensor) -> torch.Tensor:
         def hook(grad: torch.Tensor) -> torch.Tensor:
             keys = ids.flatten() + self.key_offset
-            update_embeddings, update_accumulators = optimizer.update(grad.cpu(), accumulators)
-            self._embeddings()[:] = update_embeddings
-            self._accumulators()[:] = update_accumulators
+            self.opt.update_in_place(grad.cpu(), self._embeddings(), self._accumulators())
             self.kv.push(keys, self._buffer)
             return grad
         return hook

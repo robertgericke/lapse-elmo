@@ -92,13 +92,11 @@ class PSElmo(torch.nn.Module):
             self._param_buffers[name][0] = param.clone().detach()
             self._param_buffers[name][1] = self.opt.initial_accumulator_value
             self.kv.set(key, self._param_buffers[name])
-            param.register_hook(self.grad_hook(key, name, self.opt))
+            param.register_hook(self.grad_hook(key, name))
 
-    def grad_hook(self, key: torch.Tensor, name, optimizer: PSOptimizer) -> torch.Tensor:
+    def grad_hook(self, key: torch.Tensor, name) -> torch.Tensor:
         def hook(grad: torch.Tensor) -> torch.Tensor:
-            update_parameter, update_accumulator = optimizer.update(grad.cpu(), self._param_buffers[name][1])
-            self._param_buffers[name][0] = update_parameter
-            self._param_buffers[name][1] = update_accumulator
+            self.opt.update_in_place(grad.cpu(), self._param_buffers[name][0], self._param_buffers[name][1])
             self.kv.push(key, self._param_buffers[name])
             return grad
         return hook
@@ -129,7 +127,7 @@ class PSElmo(torch.nn.Module):
                 for i, (name, param) in enumerate(self.named_parameters()):
                     key = torch.tensor([i+self._lstm_offset])
                     newParam = Parameter(self._param_buffers[name][0].to(param.device))
-                    newParam.register_hook(self.grad_hook(key, name, self.opt))
+                    newParam.register_hook(self.grad_hook(key, name))
                     rsetattr(self, name, newParam)
 
     def forward(self, inputs: torch.Tensor) -> (torch.Tensor, torch.BoolTensor):

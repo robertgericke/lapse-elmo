@@ -157,16 +157,13 @@ def pull_samples_async(kv, sample_id, classifier, opt, args):
     ids = keys - classifier.embedding.key_offset
     samples = vals[:,0,:]
     samples.requires_grad_()
-    accumulators = vals[:,1,:]
-    samples.register_hook(grad_hook(kv, keys, vals, accumulators, opt))
+    samples.register_hook(grad_hook(kv, keys, vals, opt))
 
     return ts, ids, samples
 
-def grad_hook(kv, keys: torch.Tensor, vals: torch.Tensor, accumulators:torch.Tensor, optimizer) -> torch.Tensor:
+def grad_hook(kv, keys: torch.Tensor, vals: torch.Tensor, optimizer) -> torch.Tensor:
     def hook(grad: torch.Tensor) -> torch.Tensor:
-        update_embeddings, update_accumulators = optimizer.update(grad.cpu(), accumulators)
-        vals[:,0,:] = update_embeddings
-        vals[:,1,:] = update_accumulators
+        optimizer.update_in_place(grad.cpu(), vals[:,0,:], vals[:,1,:])
         kv.push(keys, vals)
         return grad
     return hook
