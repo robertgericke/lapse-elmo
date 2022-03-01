@@ -23,7 +23,6 @@ class PSEmbedding(torch.nn.Module):
         self.num_embeddings = num_embeddings
         self.embedding_dim = embedding_dim
         self.opt = opt
-        self._timestamps = []
         self._buffer = None
         self._init_embeddings()
 
@@ -46,21 +45,20 @@ class PSEmbedding(torch.nn.Module):
         keys = ids.flatten() + self.key_offset
         self.kv.intent(keys, start, stop)
 
-    def pull_async(self, ids: torch.Tensor):
+    def pull(self, ids: torch.Tensor):
         keys = ids.flatten() + self.key_offset
         size = ids.size() + (2, self.embedding_dim)
         self._buffer = torch.empty(size, dtype=torch.float32)
-        self._timestamps.append(self.kv.pull(keys, self._buffer))
+        self.kv.pull(keys, self._buffer)
 
     def forward(self, ids: torch.Tensor, device=None) -> torch.Tensor:
-        if not self._timestamps:
-            self.pull_async(ids)
-        while self._timestamps:
-            self.kv.wait(self._timestamps.pop())
+        if self._buffer is None:
+            self.pull(ids)
 
         embeddings = self._embeddings().to(device=device).requires_grad_()
         if self.opt:
             embeddings.register_hook(self.grad_hook(ids))
+
         return embeddings
         
     def grad_hook(self, ids: torch.Tensor) -> torch.Tensor:
@@ -68,6 +66,7 @@ class PSEmbedding(torch.nn.Module):
             keys = ids.flatten() + self.key_offset
             self.opt.update_in_place(grad.cpu(), self._embeddings(), self._accumulators())
             self.kv.push(keys, self._buffer, True)
+            self._buffer = None
             return grad
         return hook
 

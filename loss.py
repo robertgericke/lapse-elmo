@@ -37,8 +37,8 @@ class PSSampledSoftmaxLoss(torch.nn.Module):
     def intent(self, ids, start, stop=0):
         self.embedding.intent(ids, start, stop)
 
-    def pull_async(self, ids: torch.Tensor):
-        self.embedding.pull_async(ids)
+    def pull(self, ids: torch.Tensor):
+        self.embedding.pull(ids)
 
     def forward(self, embeddings: torch.Tensor, target_ids: torch.Tensor, sample_ids: torch.Tensor = None, samples: torch.Tensor = None, num_tries=None, unique=False) -> torch.Tensor:
         if embeddings.shape[0] == 0: # empty batch

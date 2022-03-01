@@ -65,8 +65,8 @@ def train(worker_id, rank, device, vocab2id, args, kv):
         train_loader = DataLoader(train_dataset, batch_size=args.batch_size * args.world_size * args.workers_per_node, collate_fn=train_collate)
         train_iterator = PrefetchIterator(args.localize_ahead, train_loader)
         for i, (word_ids, mask, mask_rolled, targets, sample_id) in enumerate(train_iterator):
-            elmo.pull_dense_and_embeddings_async(word_ids)
-            classifier.pull_async(targets)
+            elmo.pull_dense_and_embeddings(word_ids)
+            classifier.pull(targets)
             ts_samples, sample_ids, samples = pull_samples_async(kv, sample_id, classifier, optimizer, args)
 
             elmo_representation, word_mask = elmo(word_ids)
@@ -85,7 +85,7 @@ def train(worker_id, rank, device, vocab2id, args, kv):
             loss_key = torch.tensor([kv.num_keys-1])
             loss_val = torch.zeros((1), dtype=torch.float32)
             kv.set(loss_key, loss_val)
-            elmo.pull_dense_parameters_async()
+            elmo.pull_dense_parameters()
             elmo.eval()
             classifier.eval()
             acc_loss = 0
@@ -95,11 +95,10 @@ def train(worker_id, rank, device, vocab2id, args, kv):
                 test_dataset = OneBillionWordIterableDataset(args.testset)
                 test_loader = DataLoader(test_dataset, batch_size=1 * args.world_size * args.workers_per_node, collate_fn=test_collate)
                 test_iterator = PrefetchIterator(args.localize_ahead, test_loader)
-                elmo.pull_dense_parameters_async()
                 all_ids = torch.tensor(range(args.num_tokens))
                 all_weights = classifier.embedding(all_ids, device)
                 for i, (word_ids, mask, mask_rolled, targets) in enumerate(test_iterator):
-                    elmo.word_embedding.pull_async(word_ids)
+                    elmo.word_embedding.pull(word_ids)
 
                     elmo_representation, word_mask = elmo(word_ids)
                     context_forward = elmo_representation[:, :, :args.embedding_dim][mask_rolled]

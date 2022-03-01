@@ -80,7 +80,6 @@ class PSElmo(torch.nn.Module):
         )
         self.dropout = Dropout(p=dropout)
         self._lstm_offset = key_offset + len(PSEmbedding.lens(num_tokens+1, embedding_dim))
-        self._timestamps = []
         self._param_buffers = {}
         self._initParameters()
         self.intent_dense_parameters()
@@ -104,34 +103,24 @@ class PSElmo(torch.nn.Module):
     def intent_embeddings(self, ids: torch.Tensor, start, stop = 0):
         self.word_embedding.intent(ids, start, stop)
 
-    def intent_dense_parameters(self):
+    def intent_dense_parameters(self, start = 0, stop = sys.maxsize):
         num_parameters = sum(1 for i in self.parameters())
         ps_keys = torch.arange(num_parameters) + self._lstm_offset
-        self.kv.intent(ps_keys, 0, sys.maxsize)
+        self.kv.intent(ps_keys, start, stop)
 
-    def pull_dense_and_embeddings_async(self, ids: torch.Tensor,):
-        self.word_embedding.pull_async(ids)
-        self.pull_dense_parameters_async()
+    def pull_dense_and_embeddings(self, ids: torch.Tensor,):
+        self.pull_dense_parameters()
+        self.word_embedding.pull(ids)
 
-    def pull_dense_parameters_async(self):
-        with torch.no_grad():
-            for i, (name, param) in enumerate(self.named_parameters()):
-                key = torch.tensor([i+self._lstm_offset])
-                self._timestamps.append(self.kv.pull(key, self._param_buffers[name]))
-
-    def wait_and_load_pulled_parameters(self):
-        if self._timestamps:
-            while self._timestamps:
-                self.kv.wait(self._timestamps.pop())
-            with torch.no_grad():
-                for i, (name, param) in enumerate(self.named_parameters()):
-                    key = torch.tensor([i+self._lstm_offset])
-                    newParam = Parameter(self._param_buffers[name][0].to(param.device))
-                    newParam.register_hook(self.grad_hook(key, name))
-                    rsetattr(self, name, newParam)
+    def pull_dense_parameters(self):
+        for i, (name, param) in enumerate(self.named_parameters()):
+            key = torch.tensor([i+self._lstm_offset])
+            self.kv.pull(key, self._param_buffers[name])
+            newParam = Parameter(self._param_buffers[name][0].to(param.device))
+            newParam.register_hook(self.grad_hook(key, name))
+            rsetattr(self, name, newParam)
 
     def forward(self, inputs: torch.Tensor) -> (torch.Tensor, torch.BoolTensor):
-        self.wait_and_load_pulled_parameters()
         device = self.scalar_mix.gamma.device
         embedded = self.word_embedding(inputs, device)
         mask = (inputs > 0).to(device)
