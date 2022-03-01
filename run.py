@@ -28,6 +28,7 @@ def run_worker(worker_id, rank, device, vocab2id, args, kv):
 
 def train(worker_id, rank, device, vocab2id, args, kv):
     print(f"Worker {worker_id} training on {device}")
+    kv.BeginSetup()
     optimizer = PSAdagrad(
         lr = 0.2,
         initial_accumulator_value=1.0,
@@ -52,6 +53,7 @@ def train(worker_id, rank, device, vocab2id, args, kv):
         num_samples=args.samples,
         opt=optimizer,
     )
+    kv.EndSetup()
 
     # move model to device
     elmo.to(device)
