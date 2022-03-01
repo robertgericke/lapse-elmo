@@ -148,14 +148,14 @@ def prepare_batch(kv, worker_id, vocab2id, elmo, classifier, sample, args, batch
         return word_ids, mask, mask_rolled, targets
 
     classifier.intent(word_ids.flatten(), target_time)
-    sample_id = kv.PrepareSample(args.samples, target_time)
+    sample_id = kv.prepare_sample(args.samples, target_time)
 
     return word_ids, mask, mask_rolled, targets, sample_id
 
 def pull_samples_async(kv, sample_id, classifier, opt, args):
     keys = torch.empty((args.samples), dtype=torch.long)
     vals = torch.empty((args.samples, 2, args.embedding_dim+1))
-    ts = kv.PullSample(sample_id, keys, vals)
+    ts = kv.pull_sample(sample_id, keys, vals)
     ids = keys - classifier.embedding.key_offset
     samples = vals[:,0,:]
     samples.requires_grad_()
@@ -196,8 +196,8 @@ def init_node(local_rank, lens, vocab2id, args):
 
     # setup sampling
     sample_min = len(PSElmo.lens(args.num_tokens, args.embedding_dim, args.cell_size, args.layers))
-    sample_max = sample_min + args.num_tokens - 1
-    server.enable_sampling_support(sample_min, sample_max)
+    sample_max = sample_min + args.num_tokens
+    server.enable_sampling_support("preloc", True, "log-uniform", sample_min, sample_max)
 
     threads = []
     for w in range(args.workers_per_node):
