@@ -27,7 +27,6 @@ def run_worker(worker_id, rank, device, vocab2id, args, kv):
 
 
 def train(worker_id, rank, device, vocab2id, args, kv):
-    kv.barrier()
     print(f"Worker {worker_id} training on {device}")
     optimizer = PSAdagrad(
         lr = 0.2,
@@ -58,6 +57,7 @@ def train(worker_id, rank, device, vocab2id, args, kv):
     elmo.to(device)
     classifier.to(device)
 
+    kv.barrier()
     for epoch in range(args.epochs):
         # set up training data
         train_collate = partial(prepare_batch, kv, worker_id, vocab2id, elmo, classifier, True, args)
@@ -165,7 +165,7 @@ def pull_samples_async(kv, sample_id, classifier, opt, args):
 def grad_hook(kv, keys: torch.Tensor, vals: torch.Tensor, optimizer) -> torch.Tensor:
     def hook(grad: torch.Tensor) -> torch.Tensor:
         optimizer.update_in_place(grad.cpu(), vals[:,0,:], vals[:,1,:])
-        kv.push(keys, vals)
+        kv.push(keys, vals, True)
         return grad
     return hook
 
@@ -201,7 +201,7 @@ def init_node(local_rank, lens, vocab2id, args):
     threads = []
     for w in range(args.workers_per_node):
         worker_id = rank * args.workers_per_node + w
-        kv = lapse.Worker(0, w, server)
+        kv = lapse.Worker(w, server)
 
         # assign training device to worker
         if args.cuda:

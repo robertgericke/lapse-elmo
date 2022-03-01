@@ -67,7 +67,7 @@ class PSEmbedding(torch.nn.Module):
         def hook(grad: torch.Tensor) -> torch.Tensor:
             keys = ids.flatten() + self.key_offset
             self.opt.update_in_place(grad.cpu(), self._embeddings(), self._accumulators())
-            self.kv.push(keys, self._buffer)
+            self.kv.push(keys, self._buffer, True)
             return grad
         return hook
 

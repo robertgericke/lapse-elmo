@@ -97,7 +97,7 @@ class PSElmo(torch.nn.Module):
     def grad_hook(self, key: torch.Tensor, name) -> torch.Tensor:
         def hook(grad: torch.Tensor) -> torch.Tensor:
             self.opt.update_in_place(grad.cpu(), self._param_buffers[name][0], self._param_buffers[name][1])
-            self.kv.push(key, self._param_buffers[name])
+            self.kv.push(key, self._param_buffers[name], True)
             return grad
         return hook
 
