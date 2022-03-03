@@ -59,6 +59,7 @@ def train(worker_id, rank, device, vocab2id, args, kv):
     elmo.to(device)
     classifier.to(device)
 
+    kv.wait_sync()
     kv.barrier()
     for epoch in range(args.epochs):
         # set up training data
@@ -82,6 +83,7 @@ def train(worker_id, rank, device, vocab2id, args, kv):
             print('[%6d] loss: %.3f' % (i, loss.item()))
             kv.advance_clock()
 
+        kv.wait_sync()
         kv.barrier() # synchronize workers
         if args.testset:
             loss_key = torch.tensor([kv.num_keys-1])
