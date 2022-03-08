@@ -34,6 +34,9 @@ def parse_arguments():
     training.add_argument('-e', '--epochs', default=2, type=int, help='number of epochs to run')
     training.add_argument('-b', '--batch_size', default=128, type=int, help='number of sentences per batch')
     training.add_argument('-s', '--samples', default=8192, type=int, help='number of samples for softmax loss')
+    training.add_argument('-sr', '--sample_replacement', dest='sample_unique', default=True, action='store_false', help='sample witht replacement')
+    training.add_argument('-ss', '--sampling_scheme', default='preloc', type=str, help='server sampling method')
+    training.add_argument('-nt', '--num_tries', type=float, help='expected number of tries to get num_samples unique samples')
 
     args = parser.parse_args()
     if args.world_size is None:

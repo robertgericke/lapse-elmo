@@ -70,15 +70,14 @@ def train(worker_id, rank, device, vocab2id, args, kv):
         for i, (word_ids, mask, mask_rolled, targets, sample_id) in enumerate(train_iterator):
             elmo.pull_dense_and_embeddings(word_ids)
             classifier.pull(targets)
-            ts_samples, sample_ids, samples = pull_samples_async(kv, sample_id, classifier, optimizer, args)
+            sample_ids, samples = pull_samples(kv, sample_id, classifier, optimizer, device, args)
 
             elmo_representation, word_mask = elmo(word_ids)
             context_forward = elmo_representation[:, :, :args.embedding_dim][mask_rolled]
             context_backward = elmo_representation[:, :, args.embedding_dim:][mask]
             context = torch.cat((context_forward, context_backward))
 
-            kv.wait(ts_samples)
-            loss = classifier(context, targets, sample_ids, samples) / targets.size(0)
+            loss = classifier(context, targets, sample_ids, samples, args.num_tries, args.sample_unique) / targets.size(0)
             loss.backward()
             print('[%6d] loss: %.3f' % (i, loss.item()))
             kv.advance_clock()
@@ -154,16 +153,16 @@ def prepare_batch(kv, worker_id, vocab2id, elmo, classifier, sample, args, batch
 
     return word_ids, mask, mask_rolled, targets, sample_id
 
-def pull_samples_async(kv, sample_id, classifier, opt, args):
+def pull_samples(kv, sample_id, classifier, opt, device, args):
     keys = torch.empty((args.samples), dtype=torch.long)
     vals = torch.empty((args.samples, 2, args.embedding_dim+1))
-    ts = kv.pull_sample(sample_id, keys, vals)
+    kv.wait(kv.pull_sample(sample_id, keys, vals))
     ids = keys - classifier.embedding.key_offset
-    samples = vals[:,0,:]
+    samples = vals[:,0,:].to(device)
     samples.requires_grad_()
     samples.register_hook(grad_hook(kv, keys, vals, opt))
 
-    return ts, ids, samples
+    return ids, samples
 
 def grad_hook(kv, keys: torch.Tensor, vals: torch.Tensor, optimizer) -> torch.Tensor:
     def hook(grad: torch.Tensor) -> torch.Tensor:
@@ -199,7 +198,7 @@ def init_node(local_rank, lens, vocab2id, args):
     # setup sampling
     sample_min = len(PSElmo.lens(args.num_tokens, args.embedding_dim, args.cell_size, args.layers))
     sample_max = sample_min + args.num_tokens
-    server.enable_sampling_support("preloc", True, "log-uniform", sample_min, sample_max)
+    server.enable_sampling_support(args.sampling_scheme, args.sample_unique, "log-uniform", sample_min, sample_max)
 
     threads = []
     for w in range(args.workers_per_node):
@@ -261,6 +260,10 @@ if __name__ == "__main__":
     lens_classifier = PSSampledSoftmaxLoss.lens(args.num_tokens, args.embedding_dim)
     lens = torch.cat((lens_elmo,lens_classifier,torch.ones(1)))
     args.num_keys = len(lens)
+
+    if not args.num_tries:
+        print("estimating num_tries...")
+        args.num_tries = PSSampledSoftmaxLoss.estimate_num_tries(args.num_tokens, args.samples)
 
     print(args)
 
