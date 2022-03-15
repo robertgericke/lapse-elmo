@@ -74,7 +74,7 @@ def train(worker_id, rank, device, vocab2id, args, kv):
             context_backward = elmo_representation[:, :, args.embedding_dim:][mask]
             context = torch.cat((context_forward, context_backward))
 
-            loss = classifier(context, targets, sample_ids, samples, args.num_tries, args.sample_unique) / targets.size(0)
+            loss = classifier(context, targets, sample_ids, samples, args.num_tries, args.sample_replacement) / targets.size(0)
             loss.backward()
             print('[%6d] loss: %.3f' % (i, loss.item()))
             kv.advance_clock()
@@ -195,7 +195,7 @@ def init_node(local_rank, lens, vocab2id, args):
     # setup sampling
     sample_min = len(PSElmo.lens(args.num_tokens, args.embedding_dim, args.cell_size, args.layers))
     sample_max = sample_min + args.num_tokens
-    server.enable_sampling_support(args.sampling_scheme, args.sample_unique, "log-uniform", sample_min, sample_max)
+    server.enable_sampling_support(args.sampling_scheme, args.sample_replacement, "log-uniform", sample_min, sample_max)
 
     threads = []
     for w in range(args.workers_per_node):
@@ -258,7 +258,7 @@ if __name__ == "__main__":
     lens = torch.cat((lens_elmo,lens_classifier,torch.ones(1)))
     args.num_keys = len(lens)
 
-    if not args.num_tries:
+    if not args.num_tries and not args.sample_replacement:
         print("estimating num_tries...")
         args.num_tries = PSSampledSoftmaxLoss.estimate_num_tries(args.num_tokens, args.samples)
 

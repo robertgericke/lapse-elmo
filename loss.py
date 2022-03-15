@@ -41,14 +41,14 @@ class PSSampledSoftmaxLoss(torch.nn.Module):
     def pull(self, ids: torch.Tensor):
         self.embedding.pull(ids)
 
-    def forward(self, embeddings: torch.Tensor, target_ids: torch.Tensor, sample_ids: torch.Tensor = None, samples: torch.Tensor = None, num_tries=None, unique=False) -> torch.Tensor:
+    def forward(self, embeddings: torch.Tensor, target_ids: torch.Tensor, sample_ids: torch.Tensor = None, samples: torch.Tensor = None, num_tries=None, sample_replacement=False) -> torch.Tensor:
         if embeddings.shape[0] == 0: # empty batch
             return torch.tensor(0.0, device=embeddings.device)
 
         if not self.training:
             return self._forward_eval(embeddings, target_ids, samples)
         else:
-            return self._forward_train(embeddings, target_ids, sample_ids, samples, num_tries, unique)
+            return self._forward_train(embeddings, target_ids, sample_ids, samples, num_tries, sample_replacement)
 
     def _forward_eval(self, embeddings: torch.Tensor, target_ids: torch.Tensor, parameters) -> torch.Tensor:
         w = parameters[:,1:]
@@ -58,9 +58,9 @@ class PSSampledSoftmaxLoss(torch.nn.Module):
 
         return torch.nn.functional.nll_loss(log_softmax, target_ids.to(embeddings.device), reduction="sum")
 
-    def _forward_train(self, embeddings: torch.Tensor, target_ids: torch.Tensor, sample_ids: torch.Tensor, samples: torch.Tensor, num_tries=None, unique=False) -> torch.Tensor:
-        target_expected_count = self.expected_count(target_ids, num_tries=num_tries, unique=unique)
-        sampled_expected_count = self.expected_count(sample_ids, num_tries=num_tries, unique=unique)
+    def _forward_train(self, embeddings: torch.Tensor, target_ids: torch.Tensor, sample_ids: torch.Tensor, samples: torch.Tensor, num_tries=None, sample_replacement=False) -> torch.Tensor:
+        target_expected_count = self.expected_count(target_ids, num_tries=num_tries, sample_replacement=sample_replacement)
+        sampled_expected_count = self.expected_count(sample_ids, num_tries=num_tries, sample_replacement=sample_replacement)
 
         # Get the softmax weights (so we can compute logits)
         true_e = self.embedding(target_ids, embeddings.device)
@@ -108,19 +108,19 @@ class PSSampledSoftmaxLoss(torch.nn.Module):
         nll_loss = -1.0 * log_softmax[:, 0].sum()
         return nll_loss
 
-    def sample(self, unique=False):
+    def sample(self, sample_replacement=False):
         return PSSampledSoftmaxLoss.sample(self._num_words, self.num_samples)
 
-    def sample(num_words, num_samples, unique=False):
-        if unique: # no sample will appear more than once
-            np_sampled_ids, num_tries = _choice(num_words, num_samples)
-            return torch.from_numpy(np_sampled_ids), num_tries
-        else:
+    def sample(num_words, num_samples, sample_replacement=False):
+        if sample_replacement:
             log_samples = np.random.rand(num_samples) * np.log(num_words + 1)
             samples = np.exp(log_samples).astype("int64") - 1
             return torch.from_numpy(np.clip(samples, a_min=0, a_max=num_words - 1))
+        else:
+            np_sampled_ids, num_tries = _choice(num_words, num_samples)
+            return torch.from_numpy(np_sampled_ids), num_tries
 
-    def expected_count(self, ids, num_tries, unique=False):
+    def expected_count(self, ids, num_tries, sample_replacement=False):
         # see: https://github.com/tensorflow/tensorflow/blob/master/tensorflow/core/kernels/range_sampler.h
         #      https://github.com/tensorflow/tensorflow/blob/master/tensorflow/core/kernels/range_sampler.cc
 
@@ -130,15 +130,15 @@ class PSSampledSoftmaxLoss(torch.nn.Module):
         # Compute expected count = (1 - (1-p)^num_tries) = -expm1(num_tries * log1p(-p))
         # P(class) = (log(class + 2) - log(class + 1)) / log(range_max + 1)
         probs = torch.log((ids.float() + 2.0) / (ids.float() + 1.0)) / self._log_num_words_p1
-        if unique:
-            expected_count = -torch.expm1(num_tries * torch.log1p(-probs))
-        else:
+        if sample_replacement:
             expected_count = probs * self.num_samples
+        else:
+            expected_count = -torch.expm1(num_tries * torch.log1p(-probs))
         return expected_count
 
     def estimate_num_tries(num_words, num_samples, trials=1000):
         tries = []
         for i in range(trials):
-            _, num_tries = PSSampledSoftmaxLoss.sample(num_words, num_samples, True)
+            _, num_tries = PSSampledSoftmaxLoss.sample(num_words, num_samples, sample_replacement=False)
             tries.append(num_tries)
         return mean(tries)
