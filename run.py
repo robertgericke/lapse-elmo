@@ -28,7 +28,7 @@ def run_worker(worker_id, rank, device, vocab2id, args, kv):
 
 def train(worker_id, rank, device, vocab2id, args, kv):
     print(f"Worker {worker_id} training on {device}")
-    kv.BeginSetup()
+    kv.begin_setup()
     optimizer = PSAdagrad(
         lr = 0.2,
         initial_accumulator_value=1.0,
@@ -53,14 +53,11 @@ def train(worker_id, rank, device, vocab2id, args, kv):
         num_samples=args.samples,
         opt=optimizer,
     )
-    kv.EndSetup()
-
     # move model to device
     elmo.to(device)
     classifier.to(device)
+    kv.end_setup()
 
-    kv.wait_sync()
-    kv.barrier()
     for epoch in range(args.epochs):
         # set up training data
         train_collate = partial(prepare_batch, kv, worker_id, vocab2id, elmo, classifier, True, args)
