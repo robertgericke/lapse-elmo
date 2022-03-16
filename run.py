@@ -32,7 +32,7 @@ def train(worker_id, rank, device, vocab2id, args, kv):
     optimizer = PSAdagrad(
         lr = 0.2,
         initial_accumulator_value=1.0,
-        eps = 0,
+        eps = 1e-07,
     )
     elmo = PSElmo(
         kv=kv,
@@ -57,6 +57,7 @@ def train(worker_id, rank, device, vocab2id, args, kv):
     elmo.to(device)
     classifier.to(device)
     kv.end_setup()
+    kv.wait_sync()
 
     for epoch in range(args.epochs):
         # set up training data
@@ -81,6 +82,7 @@ def train(worker_id, rank, device, vocab2id, args, kv):
 
         kv.wait_sync()
         kv.barrier() # synchronize workers
+        kv.wait_sync()
         if args.testset:
             loss_key = torch.tensor([kv.num_keys-1])
             loss_val = torch.zeros((1), dtype=torch.float32)
