@@ -121,6 +121,7 @@ def train(worker_id, rank, device, vocab2id, args, kv):
             kv.barrier() # synchronize workers
             kv.pull(loss_key, loss_val)
             print('avg loss: %.3f' % (loss_val).item())
+    kv.finalize()
 
 def collate(kv, worker_id, vocab2id, args, batch):
     worker_split = batch[worker_id::args.world_size * args.workers_per_node]
@@ -202,7 +203,6 @@ def init_node(local_rank, lens, vocab2id, args):
     threads = []
     for w in range(args.workers_per_node):
         worker_id = rank * args.workers_per_node + w
-        kv = lapse.Worker(w, server)
 
         # assign training device to worker
         if args.cuda:
@@ -216,7 +216,7 @@ def init_node(local_rank, lens, vocab2id, args):
             device = torch.device("cpu")
 
         # run worker
-        t = Thread(target=run_worker, args=(worker_id, rank, device, vocab2id, args, kv))
+        t = Thread(target=run_worker, args=(worker_id, rank, device, vocab2id, args, lapse.Worker(w, server)))
         t.start()
         threads.append(t)
 
