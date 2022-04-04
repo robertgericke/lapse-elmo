@@ -3,19 +3,26 @@ import torch
 from torch.utils.data import DataLoader
 import lapse
 
+
 class PrefetchIterator:
-    def __init__(self, num_batches, dataloader):
+    """ Wrapper for a DataLoader - pre loads num_batches many batches
+    (intent signaling may occure in the collate function of the DataLoader)
+    """
+    def __init__(self, num_batches, kv, dataloader):
         self.num_batches = num_batches
         self.loader = dataloader
+        self.kv = kv
 
     def __iter__(self):
         self.iter = iter(self.loader)
         self.iter_done = False
         self.queue = deque()
         
-        while len(self.queue) < self.num_batches:
+        # fill queue with initial num_batches
+        for _ in range(self.num_batches):
             self.loadnext()
-        
+            self.kv.advance_clock()
+
         return self
     
     def loadnext(self):

@@ -64,7 +64,7 @@ def train(worker_id, rank, device, vocab2id, args, kv):
         train_collate = partial(prepare_batch, kv, worker_id, vocab2id, elmo, classifier, True, args)
         train_dataset = OneBillionWordIterableDataset(args.dataset)
         train_loader = DataLoader(train_dataset, batch_size=args.batch_size * args.world_size * args.workers_per_node, collate_fn=train_collate)
-        train_iterator = PrefetchIterator(args.localize_ahead, train_loader)
+        train_iterator = PrefetchIterator(args.intent_ahead, kv, train_loader)
         for i, (word_ids, mask, mask_rolled, targets, sample_id) in enumerate(train_iterator):
             elmo.pull_dense_and_embeddings(word_ids)
             classifier.pull(targets)
@@ -96,7 +96,7 @@ def train(worker_id, rank, device, vocab2id, args, kv):
                 test_collate = partial(prepare_batch, kv, worker_id, vocab2id, elmo, classifier, False, args)
                 test_dataset = OneBillionWordIterableDataset(args.testset)
                 test_loader = DataLoader(test_dataset, batch_size=1 * args.world_size * args.workers_per_node, collate_fn=test_collate)
-                test_iterator = PrefetchIterator(args.localize_ahead, test_loader)
+                test_iterator = PrefetchIterator(args.intent_ahead, kv, test_loader)
                 all_ids = torch.tensor(range(args.num_tokens))
                 all_weights = classifier.embedding(all_ids, device)
                 for i, (word_ids, mask, mask_rolled, targets) in enumerate(test_iterator):
@@ -123,15 +123,8 @@ def train(worker_id, rank, device, vocab2id, args, kv):
             print('avg loss: %.3f' % (loss_val).item())
     kv.finalize()
 
-def collate(kv, worker_id, vocab2id, args, batch):
-    worker_split = batch[worker_id::args.world_size * args.workers_per_node]
-    word_ids = batch_to_word_ids(worker_split, vocab2id, args.max_sequence_length)
-    kv.localize(word_ids.flatten())
-    return word_ids
-
 def prepare_batch(kv, worker_id, vocab2id, elmo, classifier, sample, args, batch):
-    clock = kv.current_clock()
-    target_time = clock + args.localize_ahead
+    target_time = kv.current_clock() + args.intent_ahead
 
     worker_split = batch[worker_id::args.world_size * args.workers_per_node]
     word_ids = batch_to_word_ids(worker_split, vocab2id, args.max_sequence_length)
