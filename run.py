@@ -60,6 +60,7 @@ def train(worker_id, rank, device, vocab2id, args, kv):
     kv.wait_sync()
 
     for epoch in range(args.epochs):
+        print(f"starting epoch {epoch}")
         # set up training data
         train_collate = partial(prepare_batch, kv, worker_id, vocab2id, elmo, classifier, True, args)
         train_dataset = OneBillionWordIterableDataset(args.dataset)
@@ -84,9 +85,6 @@ def train(worker_id, rank, device, vocab2id, args, kv):
         kv.barrier() # synchronize workers
         kv.wait_sync()
         if args.testset:
-            loss_key = torch.tensor([kv.num_keys-1])
-            loss_val = torch.zeros((1), dtype=torch.float32)
-            kv.set(loss_key, loss_val)
             elmo.pull_dense_parameters()
             elmo.eval()
             classifier.eval()
@@ -115,12 +113,22 @@ def train(worker_id, rank, device, vocab2id, args, kv):
 
             elmo.train()
             classifier.train()
-            kv.barrier()
-            loss_part = acc_loss / (num_loss * args.world_size * args.workers_per_node)
-            kv.push(loss_key, loss_part.cpu())
+
+            # allreduce average loss
+            loss_key = torch.tensor([kv.num_keys-1])
+            loss_val = torch.zeros((1), dtype=torch.float32)
+            kv.set(loss_key, loss_val)
+            kv.wait_sync()
             kv.barrier() # synchronize workers
-            kv.pull(loss_key, loss_val)
-            print('avg loss: %.3f' % (loss_val).item())
+            kv.wait_sync()
+            kv.push(loss_key, (acc_loss / num_loss).cpu())
+            kv.wait_sync()
+            kv.barrier() # synchronize workers
+            kv.wait_sync()
+            if worker_id == 0:
+                kv.pull(loss_key, loss_val)
+                avg_loss = loss_val / (args.world_size * args.workers_per_node)
+                print('avg test loss: %.3f' % (avg_loss).item())
     kv.finalize()
 
 def prepare_batch(kv, worker_id, vocab2id, elmo, classifier, sample, args, batch):
