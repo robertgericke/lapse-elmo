@@ -21,13 +21,14 @@ from optimizer import PSSGD, PSAdagrad
 from utils import load_vocab, batch_to_word_ids
 
 
-def run_worker(worker_id, rank, device, vocab2id, args, kv):
-    train(worker_id, rank, device, vocab2id, args, kv)
+def run_worker(worker_id, args, kv):
+    train(worker_id, args, kv)
     kv.barrier() # wait for all workers to finish
+    kv.finalize()
 
 
-def train(worker_id, rank, device, vocab2id, args, kv):
-    print(f"Worker {worker_id} training on {device}")
+def train(worker_id, args, kv):
+    print(f"Worker {worker_id} training on {args.device}")
     kv.begin_setup()
     optimizer = PSAdagrad(
         lr = 0.2,
@@ -53,23 +54,24 @@ def train(worker_id, rank, device, vocab2id, args, kv):
         num_samples=args.samples,
         opt=optimizer,
     )
-    # move model to device
-    elmo.to(device)
-    classifier.to(device)
+    # move model to computing device
+    elmo.to(args.device)
+    classifier.to(args.device)
     kv.end_setup()
     kv.wait_sync()
 
     for epoch in range(args.epochs):
-        print(f"starting epoch {epoch}")
+        if worker_id == 0:
+            print(f"starting epoch {epoch}")
         # set up training data
-        train_collate = partial(prepare_batch, kv, worker_id, vocab2id, elmo, classifier, True, args)
         train_dataset = OneBillionWordIterableDataset(args.dataset)
+        train_collate = partial(prepare_batch, kv, worker_id, elmo, classifier, True, args)
         train_loader = DataLoader(train_dataset, batch_size=args.batch_size * args.world_size * args.workers_per_node, collate_fn=train_collate)
         train_iterator = PrefetchIterator(args.intent_ahead, kv, train_loader)
         for i, (word_ids, mask, mask_rolled, targets, sample_id) in enumerate(train_iterator):
             elmo.pull_dense_and_embeddings(word_ids)
             classifier.pull(targets)
-            sample_ids, samples = pull_samples(kv, sample_id, classifier, optimizer, device, args)
+            sample_ids, samples = pull_samples(kv, sample_id, classifier, optimizer, args.device, args)
 
             elmo_representation, word_mask = elmo(word_ids)
             context_forward = elmo_representation[:, :, :args.embedding_dim][mask_rolled]
@@ -78,25 +80,28 @@ def train(worker_id, rank, device, vocab2id, args, kv):
 
             loss = classifier(context, targets, sample_ids, samples, args.num_tries, args.sample_replacement) / targets.size(0)
             loss.backward()
-            print('[%6d] loss: %.3f' % (i, loss.item()))
             kv.advance_clock()
+            print('[%6d] loss: %.3f' % (i, loss.item()))
 
+        # synchronize replicas
         kv.wait_sync()
-        kv.barrier() # synchronize workers
+        kv.barrier()
         kv.wait_sync()
+
+        # calculate test loss
         if args.testset:
             elmo.pull_dense_parameters()
             elmo.eval()
             classifier.eval()
-            acc_loss = 0
-            num_loss = 0
             with torch.no_grad():
-                test_collate = partial(prepare_batch, kv, worker_id, vocab2id, elmo, classifier, False, args)
                 test_dataset = OneBillionWordIterableDataset(args.testset)
+                test_collate = partial(prepare_batch, kv, worker_id, elmo, classifier, False, args)
                 test_loader = DataLoader(test_dataset, batch_size=1 * args.world_size * args.workers_per_node, collate_fn=test_collate)
                 test_iterator = PrefetchIterator(args.intent_ahead, kv, test_loader)
                 all_ids = torch.tensor(range(args.num_tokens))
-                all_weights = classifier.embedding(all_ids, device)
+                all_weights = classifier.embedding(all_ids, args.device)
+                acc_loss = 0
+                num_loss = 0
                 for i, (word_ids, mask, mask_rolled, targets) in enumerate(test_iterator):
                     elmo.word_embedding.pull(word_ids)
 
@@ -108,34 +113,34 @@ def train(worker_id, rank, device, vocab2id, args, kv):
                     loss = classifier(context, targets, samples=all_weights) / targets.size(0)
                     acc_loss = acc_loss + loss
                     num_loss = num_loss + 1
-                    print('[%6d] loss: %.3f' % (i, loss.item()))
                     kv.advance_clock()
+                    print('[%6d] loss: %.3f' % (i, loss.item()))
+
+                # allreduce average loss
+                loss_key = torch.tensor([kv.num_keys-1])
+                loss_val = torch.zeros((1), dtype=torch.float32)
+                kv.set(loss_key, loss_val)
+                kv.wait_sync()
+                kv.barrier() # synchronize replicas
+                kv.wait_sync()
+                kv.push(loss_key, (acc_loss / num_loss).cpu())
+                kv.wait_sync()
+                kv.barrier() # synchronize replicas
+                kv.wait_sync()
+                if worker_id == 0:
+                    kv.pull(loss_key, loss_val)
+                    avg_loss = loss_val / (args.world_size * args.workers_per_node)
+                    print('avg test loss: %.3f' % (avg_loss).item())
 
             elmo.train()
             classifier.train()
 
-            # allreduce average loss
-            loss_key = torch.tensor([kv.num_keys-1])
-            loss_val = torch.zeros((1), dtype=torch.float32)
-            kv.set(loss_key, loss_val)
-            kv.wait_sync()
-            kv.barrier() # synchronize workers
-            kv.wait_sync()
-            kv.push(loss_key, (acc_loss / num_loss).cpu())
-            kv.wait_sync()
-            kv.barrier() # synchronize workers
-            kv.wait_sync()
-            if worker_id == 0:
-                kv.pull(loss_key, loss_val)
-                avg_loss = loss_val / (args.world_size * args.workers_per_node)
-                print('avg test loss: %.3f' % (avg_loss).item())
-    kv.finalize()
 
-def prepare_batch(kv, worker_id, vocab2id, elmo, classifier, sample, args, batch):
+def prepare_batch(kv, worker_id, elmo, classifier, sample, args, batch):
     target_time = kv.current_clock() + args.intent_ahead
 
     worker_split = batch[worker_id::args.world_size * args.workers_per_node]
-    word_ids = batch_to_word_ids(worker_split, vocab2id, args.max_sequence_length)
+    word_ids = batch_to_word_ids(worker_split, args.vocab2id, args.max_sequence_length)
     elmo.intent_embeddings(word_ids.flatten(), target_time)
 
     mask = word_ids > 0
@@ -181,7 +186,7 @@ def init_scheduler(dummy, args):
     lapse.scheduler(args.num_keys, args.workers_per_node)
 
 
-def init_node(local_rank, lens, vocab2id, args):
+def init_node(local_rank, lens, args):
     """Start up a Lapse node (server + multiple worker threads)"""
     os.environ['DMLC_NUM_SERVER'] = str(args.world_size)
     os.environ['DMLC_ROLE'] = 'server'
@@ -212,12 +217,12 @@ def init_node(local_rank, lens, vocab2id, args):
                 device_id = args.device_ids[local_worker_id]
             else:
                 device_id = local_worker_id % cuda.device_count()
-            device = torch.device("cuda:" + str(device_id))
+            args.device = torch.device("cuda:" + str(device_id))
         else:
-            device = torch.device("cpu")
+            args.device = torch.device("cpu")
 
         # run worker
-        t = Thread(target=run_worker, args=(worker_id, rank, device, vocab2id, args, lapse.Worker(w, server)))
+        t = Thread(target=run_worker, args=(worker_id, args, lapse.Worker(w, server)))
         t.start()
         threads.append(t)
 
@@ -251,9 +256,12 @@ if __name__ == "__main__":
         if args.role == 'scheduler':
             args.nodes = 0
 
+    print(args)
+
     # load vocab
-    vocab2id = load_vocab(args.vocab)
-    args.num_tokens = len(vocab2id)
+    args.vocab2id = load_vocab(args.vocab)
+    args.num_tokens = len(args.vocab2id)
+    print(f"Loaded vocabulary of {args.num_tokens} tokens.")
 
     # calculate parameter lens
     lens_elmo = PSElmo.lens(args.num_tokens, args.embedding_dim, args.cell_size, args.layers)
@@ -261,11 +269,11 @@ if __name__ == "__main__":
     lens = torch.cat((lens_elmo,lens_classifier,torch.ones(1)))
     args.num_keys = len(lens)
 
+    # estimate num_tries for loss calculation if necessary
     if not args.num_tries and not args.sample_replacement:
-        print("estimating num_tries...")
+        print("Estimating num_tries...")
         args.num_tries = PSSampledSoftmaxLoss.estimate_num_tries(args.num_tokens, args.samples)
-
-    print(args)
+        print(f"AVG num_tries={args.num_tries}")
 
     # catch interrupt (to shut down lapse processes)
     signal(SIGINT, kill_processes)
@@ -281,7 +289,7 @@ if __name__ == "__main__":
 
     # launch lapse processes
     for local_rank in range(args.nodes):
-        p = Process(target=init_node, args=(local_rank, lens, vocab2id, args))
+        p = Process(target=init_node, args=(local_rank, lens, args))
         p.start()
         processes.append(p)
 

@@ -16,8 +16,7 @@ def parse_arguments():
     distribution.add_argument('-ru', '--root_uri', default='127.0.0.1', type=str, help='adress of the scheduler node')
     distribution.add_argument('-rp', '--root_port', default='9091', type=str, help='port of the scheduler node')
     distribution.add_argument('-nn', '--nodes', default=1, type=int, help='number of local server nodes to create')
-    distribution.add_argument('-hs', '--hotspots', default=100, type=int, help='number of hotspot embeddings > 0; only dense parameters = 0; no hotspot parameters < 0')
-    distribution.add_argument('-ia', '--intent_ahead', default=1, type=int, help='number of training batches to pre localize')
+    distribution.add_argument('-ia', '--intent_ahead', default=1, type=int, help='number of training batches to pre load and intent')
     distribution.add_argument('-nw', '--workers_per_node', default=1, type=int, help='number of worker threads per node')
     distribution.add_argument('-ws', '--world_size', type=int, help='total number of server nodes')
     # elmo options
