@@ -71,11 +71,15 @@ class PSEmbedding(torch.nn.Module):
     def grad_hook(self, ids: torch.Tensor) -> torch.Tensor:
         def hook(grad: torch.Tensor) -> torch.Tensor:
             keys = ids.flatten() + self.key_offset
+            buffer = self._buffer.detach().clone()
             self.opt.update_in_place(grad.cpu(), self._embeddings(), self._accumulators())
             self.kv.push(keys, self._buffer, True)
             if not self._buffer.isfinite().all():
                 print(f"ALERT: Embedding is not finite in:{(torch.min(keys),torch.max(keys))}")
                 print(f"grad is finite:{grad.isfinite().all()}")
+                print(f"buffer if finite:{buffer.isfinite().all()}")
+                torch.save(grad.cpu(), 'grad.pt')
+                torch.save(buffer, 'buffer.pt')
                 self.isfinite = False
             self._buffer = None
             return grad
