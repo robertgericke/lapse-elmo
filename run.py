@@ -45,6 +45,7 @@ def train(worker_id, args, kv):
         lstm_recurrent_dropout=args.recurrent_dropout,
         dropout=args.dropout,
         opt=optimizer,
+        init=(worker_id==0),
     )
     classifier = PSSampledSoftmaxLoss(
         kv=kv, 
@@ -53,6 +54,7 @@ def train(worker_id, args, kv):
         embedding_dim=args.embedding_dim,
         num_samples=args.samples,
         opt=optimizer,
+        init=(worker_id==0),
     )
     # move model to computing device
     elmo.to(args.device)

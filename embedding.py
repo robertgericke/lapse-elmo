@@ -16,6 +16,8 @@ class PSEmbedding(torch.nn.Module):
         num_embeddings: int = 1024,
         embedding_dim: int = 512,
         opt: PSOptimizer = None,
+        init: bool = True,
+        max_size: int = 2**16
     ) -> None:
         super().__init__()
         self.kv = kv
@@ -24,14 +26,18 @@ class PSEmbedding(torch.nn.Module):
         self.embedding_dim = embedding_dim
         self.opt = opt
         self._buffer = None
-        self._init_embeddings()
+        self.max_size = max_size
+        if init:
+            self._init_embeddings()
 
     def _init_embeddings(self, ):
-        keys = torch.LongTensor(range(self.num_embeddings)) + self.key_offset
-        values = torch.empty((self.num_embeddings, self.embedding_dim * 2), dtype=torch.float32)
-        init.normal_(values[:,:self.embedding_dim])
-        values[:,self.embedding_dim:] = self.opt.initial_accumulator_value
-        self.kv.set(keys, values)
+        for ids in torch.LongTensor(range(self.num_embeddings)).split(self.max_size):
+            print(ids.data[0])
+            keys = ids + self.key_offset
+            values = torch.empty(keys.size()+(self.embedding_dim*2,), dtype=torch.float32)
+            init.normal_(values[:,:self.embedding_dim])
+            values[:,self.embedding_dim:] = self.opt.initial_accumulator_value
+            self.kv.set(keys, values)
 
     def _embeddings(self):
         slice_dim = self._buffer.dim() - 2

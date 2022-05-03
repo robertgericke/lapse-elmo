@@ -51,6 +51,7 @@ class PSElmo(torch.nn.Module):
         scalar_mix_parameters: List[float] = None,
         dropout: float = 0.1,
         opt: PSOptimizer = None,
+        init: bool = True,
     ) -> None:
         super().__init__()
         self.kv = kv
@@ -61,6 +62,7 @@ class PSElmo(torch.nn.Module):
             num_embeddings=num_tokens+1, #one more for zero embedding (no word / blank space)
             embedding_dim=embedding_dim,
             opt=opt,
+            init=init,
         )
         self.elmo_lstm = ElmoLstm(
             input_size=embedding_dim,
@@ -81,17 +83,22 @@ class PSElmo(torch.nn.Module):
         self.dropout = Dropout(p=dropout)
         self._lstm_offset = key_offset + len(PSEmbedding.lens(num_tokens+1, embedding_dim))
         self._param_buffers = {}
-        self._initParameters()
         self.intent_dense_parameters()
+        for i, (name, param) in enumerate(self.named_parameters()):
+            key = torch.tensor([i+self._lstm_offset])
+            self._param_buffers[name] = torch.empty((2,)+param.size())
+            param.register_hook(self.grad_hook(key, name))
+        if init:
+            self._initParameters()
+
 
     def _initParameters(self):
         for i, (name, param) in enumerate(self.named_parameters()):
             key = torch.tensor([i+self._lstm_offset])
-            self._param_buffers[name] = torch.empty((2,)+param.size())
             self._param_buffers[name][0] = param.clone().detach()
             self._param_buffers[name][1] = self.opt.initial_accumulator_value
             self.kv.set(key, self._param_buffers[name])
-            param.register_hook(self.grad_hook(key, name))
+
 
     def grad_hook(self, key: torch.Tensor, name) -> torch.Tensor:
         def hook(grad: torch.Tensor) -> torch.Tensor:

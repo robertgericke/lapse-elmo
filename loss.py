@@ -22,6 +22,7 @@ class PSSampledSoftmaxLoss(torch.nn.Module):
         embedding_dim: int = 512,
         num_samples: int = 128,
         opt: PSOptimizer = None,
+        init: bool = True,
     ) -> None:
         super().__init__()
         self.num_samples = num_samples
@@ -33,6 +34,7 @@ class PSSampledSoftmaxLoss(torch.nn.Module):
             num_embeddings=num_embeddings, 
             embedding_dim=embedding_dim+1, 
             opt=opt,
+            init=init,
         )
 
     def intent(self, ids, start, stop=0):
