@@ -92,7 +92,6 @@ def train(worker_id, args, kv):
             context = torch.cat((context_forward, context_backward))
 
             loss = classifier(context, targets, sample_ids, samples, args.num_tries, args.sample_replacement) / targets.size(0)
-            loss.backward()
             if (not loss.isfinite()) or (not elmo.isfinite) or (not elmo.word_embedding.isfinite) or (not classifier.embedding.isfinite):
                 print("Finite checks:")
                 print(f"context:{context.isfinite().all()}")
@@ -104,7 +103,7 @@ def train(worker_id, args, kv):
                 for i, (name, param) in enumerate(elmo.named_parameters()):
                     print(f"elmo_buffer_{name}:{param.isfinite().all()}")
                 os.kill(os.getpid(), SIGINT)
-            #loss.backward()
+            loss.backward()
             kv.advance_clock()
             print('[%6d] loss: %.3f' % (i, loss.item()))
         print(f"Finish epoch {epoch} at {datetime.now()}")
