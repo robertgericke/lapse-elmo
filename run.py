@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+from datetime import datetime
 from functools import partial
 import numpy as np
 import os
@@ -29,12 +30,14 @@ def run_worker(worker_id, args, kv):
 
 def train(worker_id, args, kv):
     print(f"Worker {worker_id} training on {args.device}")
-    kv.begin_setup()
+    #kv.begin_setup()
+    #print(f"Worker {worker_id} Adagrad")
     optimizer = PSAdagrad(
         lr = 0.2,
         initial_accumulator_value=1.0,
         eps = 1e-07,
     )
+    print(f"Worker {worker_id} Elmo")
     elmo = PSElmo(
         kv=kv,
         key_offset=0,
@@ -47,8 +50,9 @@ def train(worker_id, args, kv):
         opt=optimizer,
         init=(worker_id==0),
     )
+    print(f"Worker {worker_id} classifier")
     classifier = PSSampledSoftmaxLoss(
-        kv=kv, 
+        kv=kv,
         key_offset=len(PSElmo.lens(args.num_tokens, args.embedding_dim, args.cell_size, args.layers)),
         num_embeddings=args.num_tokens,
         embedding_dim=args.embedding_dim,
@@ -57,19 +61,25 @@ def train(worker_id, args, kv):
         init=(worker_id==0),
     )
     # move model to computing device
+    print(f"Worker {worker_id} move")
     elmo.to(args.device)
     classifier.to(args.device)
-    kv.end_setup()
+    #print(f"Worker {worker_id} end")
+    #kv.end_setup()
+    print(f"Worker {worker_id} sync")
+    kv.wait_sync()
+    kv.barrier()
     kv.wait_sync()
 
     for epoch in range(args.epochs):
         if worker_id == 0:
-            print(f"starting epoch {epoch}")
+            print(f"Starting epoch {epoch}")
         # set up training data
         train_dataset = OneBillionWordIterableDataset(args.dataset)
         train_collate = partial(prepare_batch, kv, worker_id, elmo, classifier, True, args)
         train_loader = DataLoader(train_dataset, batch_size=args.batch_size * args.world_size * args.workers_per_node, collate_fn=train_collate)
         train_iterator = PrefetchIterator(args.intent_ahead, kv, train_loader)
+        print(f"Begin epoch {epoch} at {datetime.now()}")
         for i, (word_ids, mask, mask_rolled, targets, sample_id) in enumerate(train_iterator):
             elmo.pull_dense_and_embeddings(word_ids)
             classifier.pull(targets)
@@ -84,6 +94,7 @@ def train(worker_id, args, kv):
             loss.backward()
             kv.advance_clock()
             print('[%6d] loss: %.3f' % (i, loss.item()))
+        print(f"Finish epoch {epoch} at {datetime.now()}")
 
         # synchronize replicas
         kv.wait_sync()
@@ -184,7 +195,7 @@ def init_scheduler(dummy, args):
     os.environ['DMLC_ROLE'] = 'scheduler'
     os.environ['DMLC_PS_ROOT_URI'] = args.root_uri
     os.environ['DMLC_PS_ROOT_PORT'] = args.root_port
-
+    print("running scheduler")
     lapse.scheduler(args.num_keys, args.workers_per_node)
 
 
@@ -194,7 +205,8 @@ def init_node(local_rank, lens, args):
     os.environ['DMLC_ROLE'] = 'server'
     os.environ['DMLC_PS_ROOT_URI'] = args.root_uri
     os.environ['DMLC_PS_ROOT_PORT'] = args.root_port
-    
+
+    print("starting server...")
     lapse.setup(args.num_keys, args.workers_per_node)
     server = lapse.Server(lens)
     rank = server.my_rank()

@@ -56,6 +56,7 @@ class PSElmo(torch.nn.Module):
         super().__init__()
         self.kv = kv
         self.opt = opt
+        print("init embedding")
         self.word_embedding = PSEmbedding(
             kv=kv,
             key_offset=key_offset,
@@ -64,6 +65,7 @@ class PSElmo(torch.nn.Module):
             opt=opt,
             init=init,
         )
+        print("init lstm")
         self.elmo_lstm = ElmoLstm(
             input_size=embedding_dim,
             hidden_size=embedding_dim,
@@ -74,6 +76,7 @@ class PSElmo(torch.nn.Module):
             state_projection_clip_value=lstm_state_proj_clip,
             memory_cell_clip_value=lstm_memory_cell_clip,
         )
+        print("init scalar")
         self.scalar_mix = ScalarMix(
             mixture_size=num_layers + 1,
             do_layer_norm=scalar_mix_do_layer_norm,
@@ -83,12 +86,14 @@ class PSElmo(torch.nn.Module):
         self.dropout = Dropout(p=dropout)
         self._lstm_offset = key_offset + len(PSEmbedding.lens(num_tokens+1, embedding_dim))
         self._param_buffers = {}
+        print("intent params")
         self.intent_dense_parameters()
         for i, (name, param) in enumerate(self.named_parameters()):
             key = torch.tensor([i+self._lstm_offset])
             self._param_buffers[name] = torch.empty((2,)+param.size())
             param.register_hook(self.grad_hook(key, name))
         if init:
+            print("init params")
             self._initParameters()
 
 
