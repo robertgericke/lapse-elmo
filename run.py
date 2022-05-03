@@ -71,6 +71,7 @@ def train(worker_id, args, kv):
     kv.barrier()
     kv.wait_sync()
 
+    torch.autograd.set_detect_anomaly(True)
     for epoch in range(args.epochs):
         if worker_id == 0:
             print(f"Starting epoch {epoch}")
@@ -91,6 +92,19 @@ def train(worker_id, args, kv):
             context = torch.cat((context_forward, context_backward))
 
             loss = classifier(context, targets, sample_ids, samples, args.num_tries, args.sample_replacement) / targets.size(0)
+            loss 
+            if not loss.isfinite():
+                print("Finite checks:")
+                print(f"context:{context.isfinite().all()}")
+                print(f"targets:{targets.isfinite().all()}")
+                print(f"samples:{samples.isfinite().all()}")
+                print(f"elmo_representation:{elmo_representation.isfinite().all()}")
+                print(f"samples:{samples.isfinite().all()}")
+                print(f"elmo_embedding_buffer:{elmo.word_embedding._buffer.isfinite().all()}")
+                print(f"loss_embedding_buffer:{classifier.embedding._buffer.isfinite().all()}")
+                for i, (name, param) in enumerate(elmo.named_parameters()):
+                    print(f"elmo_buffer_{name}:{param.isfinite().all()}")
+                kill_processes(1,1)
             loss.backward()
             kv.advance_clock()
             print('[%6d] loss: %.3f' % (i, loss.item()))
@@ -187,6 +201,8 @@ def grad_hook(kv, keys: torch.Tensor, vals: torch.Tensor, optimizer) -> torch.Te
     def hook(grad: torch.Tensor) -> torch.Tensor:
         optimizer.update_in_place(grad.cpu(), vals[:,0,:], vals[:,1,:])
         kv.push(keys, vals, True)
+        if not vals.isfinite().all():
+            print(f"ALERT: Samples not finite in:{torch.min(keys)}")
         return grad
     return hook
 

@@ -109,6 +109,8 @@ class PSElmo(torch.nn.Module):
         def hook(grad: torch.Tensor) -> torch.Tensor:
             self.opt.update_in_place(grad.cpu(), self._param_buffers[name][0], self._param_buffers[name][1])
             self.kv.push(key, self._param_buffers[name], True)
+            if not self._param_buffers[name].isfinite().all():
+                print(f"ALERT: LSTM is not finite in:{key}:{name}")
             return grad
         return hook
 

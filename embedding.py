@@ -17,7 +17,7 @@ class PSEmbedding(torch.nn.Module):
         embedding_dim: int = 512,
         opt: PSOptimizer = None,
         init: bool = True,
-        max_size: int = 2**16
+        max_size: int = 2**14
     ) -> None:
         super().__init__()
         self.kv = kv
@@ -72,6 +72,8 @@ class PSEmbedding(torch.nn.Module):
             keys = ids.flatten() + self.key_offset
             self.opt.update_in_place(grad.cpu(), self._embeddings(), self._accumulators())
             self.kv.push(keys, self._buffer, True)
+            if not self._buffer.isfinite().all():
+                print(f"ALERT: Embedding is not finite in:{torch.min(keys)}")
             self._buffer = None
             return grad
         return hook
