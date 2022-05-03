@@ -95,6 +95,7 @@ class PSElmo(torch.nn.Module):
         if init:
             print("init params")
             self._initParameters()
+        self.isfinite = True
 
 
     def _initParameters(self):
@@ -111,6 +112,8 @@ class PSElmo(torch.nn.Module):
             self.kv.push(key, self._param_buffers[name], True)
             if not self._param_buffers[name].isfinite().all():
                 print(f"ALERT: LSTM is not finite in:{key}:{name}")
+                print(f"grad is finite:{grad.isfinite().all()}")
+                self.isfinite = False
             return grad
         return hook
 

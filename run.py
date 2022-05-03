@@ -71,7 +71,7 @@ def train(worker_id, args, kv):
     kv.barrier()
     kv.wait_sync()
 
-    torch.autograd.set_detect_anomaly(True)
+    #torch.autograd.set_detect_anomaly(True)
     for epoch in range(args.epochs):
         if worker_id == 0:
             print(f"Starting epoch {epoch}")
@@ -92,8 +92,7 @@ def train(worker_id, args, kv):
             context = torch.cat((context_forward, context_backward))
 
             loss = classifier(context, targets, sample_ids, samples, args.num_tries, args.sample_replacement) / targets.size(0)
-            loss 
-            if not loss.isfinite():
+            if (not loss.isfinite()) or (not elmo.isfinite) or (not elmo.word_embedding.isfinite) or (not classifier.embedding.isfinite):
                 print("Finite checks:")
                 print(f"context:{context.isfinite().all()}")
                 print(f"targets:{targets.isfinite().all()}")
@@ -104,7 +103,7 @@ def train(worker_id, args, kv):
                 print(f"loss_embedding_buffer:{classifier.embedding._buffer.isfinite().all()}")
                 for i, (name, param) in enumerate(elmo.named_parameters()):
                     print(f"elmo_buffer_{name}:{param.isfinite().all()}")
-                kill_processes(1,1)
+                os.kill(os.getpid(), signal.SIGINT)
             loss.backward()
             kv.advance_clock()
             print('[%6d] loss: %.3f' % (i, loss.item()))
