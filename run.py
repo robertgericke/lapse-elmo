@@ -190,9 +190,6 @@ def pull_samples(kv, sample_id, classifier, opt, device, args):
     kv.wait(kv.pull_sample(sample_id, keys, vals))
     if (vals[:,1,:] < 0).any():
         print(f"ALERT: Pulled sample acc negative:{(torch.min(keys),torch.max(keys))}")
-        torch.save(grad.cpu(), 'grad.pt')
-        torch.save(buffer, 'buffer.pt')
-        elmo.isfinite = False
     ids = keys - classifier.embedding.key_offset
     samples = vals[:,0,:].to(device)
     samples.requires_grad_()

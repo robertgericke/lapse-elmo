@@ -59,9 +59,6 @@ class PSEmbedding(torch.nn.Module):
         self.kv.pull(keys, self._buffer)
         if ((PSEmbedding._accumulators(self._buffer)) < 0).any():
             print(f"ALERT: Pulled acc negative:{(torch.min(keys),torch.max(keys))}")
-            torch.save(grad.cpu(), 'grad.pt')
-            torch.save(buffer, 'buffer.pt')
-            self.isfinite = False
 
     def forward(self, ids: torch.Tensor, device=None) -> torch.Tensor:
         if self._buffer is None:
