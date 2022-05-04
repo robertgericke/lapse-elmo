@@ -30,7 +30,7 @@ def run_worker(worker_id, args, kv):
 
 def train(worker_id, args, kv):
     print(f"Worker {worker_id} training on {args.device}")
-    #kv.begin_setup()
+    kv.begin_setup()
     #print(f"Worker {worker_id} Adagrad")
     optimizer = PSAdagrad(
         lr = 0.2,
@@ -64,11 +64,11 @@ def train(worker_id, args, kv):
     print(f"Worker {worker_id} move")
     elmo.to(args.device)
     classifier.to(args.device)
-    #print(f"Worker {worker_id} end")
-    #kv.end_setup()
+    print(f"Worker {worker_id} end")
+    kv.end_setup()
     print(f"Worker {worker_id} sync")
-    kv.wait_sync()
-    kv.barrier()
+    #kv.wait_sync()
+    #kv.barrier()
     kv.wait_sync()
 
     #torch.autograd.set_detect_anomaly(True)
