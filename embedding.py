@@ -74,10 +74,16 @@ class PSEmbedding(torch.nn.Module):
             buffer = self._buffer.detach().clone()
             if ((PSEmbedding._accumulators(self._buffer)) < 0).any():
                 print(f"ALERT: Pulled acc negative:{(torch.min(keys),torch.max(keys))}")
+                torch.save(grad.cpu(), 'grad.pt')
+                torch.save(buffer, 'buffer.pt')
+                self.isfinite = False
             self.opt.update_in_place(grad.cpu(), PSEmbedding._embeddings(self._buffer), PSEmbedding._accumulators(self._buffer))
             self.kv.push(keys, self._buffer, True)
             if ((PSEmbedding._accumulators(self._buffer)) < 0).any():
                 print(f"ALERT: Pushed acc negative:{(torch.min(keys),torch.max(keys))}")
+                torch.save(grad.cpu(), 'grad.pt')
+                torch.save(buffer, 'buffer.pt')
+                self.isfinite = False
             if not self._buffer.isfinite().all():
                 print(f"ALERT: Embedding is not finite in:{(torch.min(keys),torch.max(keys))}")
                 print(f"grad is finite:{grad.isfinite().all()}")
