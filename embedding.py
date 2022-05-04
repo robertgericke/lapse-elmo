@@ -35,18 +35,18 @@ class PSEmbedding(torch.nn.Module):
         for ids in torch.LongTensor(range(self.num_embeddings)).split(self.max_size):
             print(ids.data[0])
             keys = ids + self.key_offset
-            values = torch.empty(keys.size()+(self.embedding_dim*2,), dtype=torch.float32)
-            init.normal_(values[:,:self.embedding_dim])
-            values[:,self.embedding_dim:] = self.opt.initial_accumulator_value
+            values = torch.empty(keys.size()+(2,self.embedding_dim), dtype=torch.float32)
+            init.normal_(PSEmbedding._embeddings(values))
+            PSEmbedding._accumulators(values)[:] = self.opt.initial_accumulator_value
             self.kv.set(keys, values)
 
-    def _embeddings(self):
-        slice_dim = self._buffer.dim() - 2
-        return self._buffer.select(slice_dim, 0)
+    def _embeddings(buffer):
+        slice_dim = buffer.dim() - 2
+        return buffer.select(slice_dim, 0)
 
-    def _accumulators(self):
-        slice_dim = self._buffer.dim() - 2
-        return self._buffer.select(slice_dim, 1)
+    def _accumulators(buffer):
+        slice_dim = buffer.dim() - 2
+        return buffer.select(slice_dim, 1)
 
     def intent(self, ids: torch.Tensor, start, stop = 0):
         keys = ids.flatten() + self.key_offset
@@ -62,7 +62,7 @@ class PSEmbedding(torch.nn.Module):
         if self._buffer is None:
             self.pull(ids)
 
-        embeddings = self._embeddings().to(device=device).requires_grad_()
+        embeddings = PSEmbedding._embeddings(self._buffer).to(device=device).requires_grad_()
         if self.opt:
             embeddings.register_hook(self.grad_hook(ids))
 
@@ -72,7 +72,7 @@ class PSEmbedding(torch.nn.Module):
         def hook(grad: torch.Tensor) -> torch.Tensor:
             keys = ids.flatten() + self.key_offset
             buffer = self._buffer.detach().clone()
-            self.opt.update_in_place(grad.cpu(), self._embeddings(), self._accumulators())
+            self.opt.update_in_place(grad.cpu(), PSEmbedding._embeddings(self._buffer), PSEmbedding._accumulators(self._buffer))
             self.kv.push(keys, self._buffer, True)
             if not self._buffer.isfinite().all():
                 print(f"ALERT: Embedding is not finite in:{(torch.min(keys),torch.max(keys))}")
