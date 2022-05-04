@@ -57,6 +57,11 @@ class PSEmbedding(torch.nn.Module):
         size = ids.size() + (2, self.embedding_dim)
         self._buffer = torch.empty(size, dtype=torch.float32)
         self.kv.pull(keys, self._buffer)
+        if ((PSEmbedding._accumulators(self._buffer)) < 0).any():
+            print(f"ALERT: Pulled acc negative:{(torch.min(keys),torch.max(keys))}")
+            torch.save(grad.cpu(), 'grad.pt')
+            torch.save(buffer, 'buffer.pt')
+            self.isfinite = False
 
     def forward(self, ids: torch.Tensor, device=None) -> torch.Tensor:
         if self._buffer is None:
@@ -73,7 +78,7 @@ class PSEmbedding(torch.nn.Module):
             keys = ids.flatten() + self.key_offset
             buffer = self._buffer.detach().clone()
             if ((PSEmbedding._accumulators(self._buffer)) < 0).any():
-                print(f"ALERT: Pulled acc negative:{(torch.min(keys),torch.max(keys))}")
+                print(f"ALERT: stored acc negative:{(torch.min(keys),torch.max(keys))}")
                 torch.save(grad.cpu(), 'grad.pt')
                 torch.save(buffer, 'buffer.pt')
                 self.isfinite = False

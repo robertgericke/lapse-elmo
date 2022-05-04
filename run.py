@@ -188,6 +188,11 @@ def pull_samples(kv, sample_id, classifier, opt, device, args):
     keys = torch.empty((args.samples), dtype=torch.long)
     vals = torch.empty((args.samples, 2, args.embedding_dim+1))
     kv.wait(kv.pull_sample(sample_id, keys, vals))
+    if (vals[:,1,:] < 0).any():
+        print(f"ALERT: Pulled sample acc negative:{(torch.min(keys),torch.max(keys))}")
+        torch.save(grad.cpu(), 'grad.pt')
+        torch.save(buffer, 'buffer.pt')
+        elmo.isfinite = False
     ids = keys - classifier.embedding.key_offset
     samples = vals[:,0,:].to(device)
     samples.requires_grad_()
@@ -198,7 +203,17 @@ def pull_samples(kv, sample_id, classifier, opt, device, args):
 def grad_hook(kv, keys: torch.Tensor, vals: torch.Tensor, optimizer) -> torch.Tensor:
     def hook(grad: torch.Tensor) -> torch.Tensor:
         optimizer.update_in_place(grad.cpu(), vals[:,0,:], vals[:,1,:])
+        if (vals[:,1,:] < 0).any():
+            print(f"ALERT: stored sample acc negative:{(torch.min(keys),torch.max(keys))}")
+            torch.save(grad.cpu(), 'grad.pt')
+            torch.save(buffer, 'buffer.pt')
+            elmo.isfinite = False
         kv.push(keys, vals, True)
+        if (vals[:,1,:] < 0).any():
+            print(f"ALERT: Pulled sample acc negative:{(torch.min(keys),torch.max(keys))}")
+            torch.save(grad.cpu(), 'grad.pt')
+            torch.save(buffer, 'buffer.pt')
+            elmo.isfinite = False
         if not vals.isfinite().all():
             print(f"ALERT: Samples not finite in:{torch.min(keys)}")
         return grad
