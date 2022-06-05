@@ -101,7 +101,8 @@ def train(worker_id, args, kv):
                 print(f"elmo_embedding_buffer:{elmo.word_embedding._buffer.isfinite().all()}")
                 print(f"loss_embedding_buffer:{classifier.embedding._buffer.isfinite().all()}")
                 for i, (name, param) in enumerate(elmo.named_parameters()):
-                    print(f"elmo_buffer_{name}:{param.isfinite().all()}")
+                    if not param.isfinite().all():
+                        print(f"elmo_buffer_{name}:{param.isfinite().all()}")
                 os.kill(os.getpid(), SIGINT)
             loss.backward()
             kv.advance_clock()
@@ -205,7 +206,7 @@ def grad_hook(kv, keys: torch.Tensor, vals: torch.Tensor, optimizer) -> torch.Te
             torch.save(grad.cpu(), 'grad.pt')
             torch.save(buffer, 'buffer.pt')
             elmo.isfinite = False
-        kv.push(keys, vals, True)
+        kv.push(keys, vals)
         if (vals[:,1,:] < 0).any():
             print(f"ALERT: Pulled sample acc negative:{(torch.min(keys),torch.max(keys))}")
             torch.save(grad.cpu(), 'grad.pt')

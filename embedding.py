@@ -33,7 +33,7 @@ class PSEmbedding(torch.nn.Module):
 
     def _init_embeddings(self, ):
         for ids in torch.LongTensor(range(self.num_embeddings)).split(self.max_size):
-            print(ids.data[0])
+            #print(ids.data[0])
             keys = ids + self.key_offset
             values = torch.empty(keys.size()+(2,self.embedding_dim), dtype=torch.float32)
             init.normal_(PSEmbedding._embeddings(values))
@@ -69,7 +69,7 @@ class PSEmbedding(torch.nn.Module):
             embeddings.register_hook(self.grad_hook(ids))
 
         return embeddings
-        
+
     def grad_hook(self, ids: torch.Tensor) -> torch.Tensor:
         def hook(grad: torch.Tensor) -> torch.Tensor:
             keys = ids.flatten() + self.key_offset
@@ -80,7 +80,7 @@ class PSEmbedding(torch.nn.Module):
                 torch.save(buffer, 'buffer.pt')
                 self.isfinite = False
             self.opt.update_in_place(grad.cpu(), PSEmbedding._embeddings(self._buffer), PSEmbedding._accumulators(self._buffer))
-            self.kv.push(keys, self._buffer, True)
+            self.kv.push(keys, self._buffer)
             if ((PSEmbedding._accumulators(self._buffer)) < 0).any():
                 print(f"ALERT: Pushed acc negative:{(torch.min(keys),torch.max(keys))}")
                 torch.save(grad.cpu(), 'grad.pt')
