@@ -203,17 +203,17 @@ def grad_hook(kv, keys: torch.Tensor, vals: torch.Tensor, optimizer) -> torch.Te
         optimizer.update_in_place(grad.cpu(), vals[:,0,:], vals[:,1,:])
         if (vals[:,1,:] < 0).any():
             print(f"ALERT: stored sample acc negative:{(torch.min(keys),torch.max(keys))}")
-            torch.save(grad.cpu(), 'grad.pt')
-            torch.save(buffer, 'buffer.pt')
+            #torch.save(grad.cpu(), 'grad.pt')
+            #torch.save(buffer, 'buffer.pt')
             elmo.isfinite = False
         kv.push(keys, vals)
         if (vals[:,1,:] < 0).any():
-            print(f"ALERT: Pulled sample acc negative:{(torch.min(keys),torch.max(keys))}")
-            torch.save(grad.cpu(), 'grad.pt')
-            torch.save(buffer, 'buffer.pt')
+            print(f"ALERT: Pushed sample acc negative:{(torch.min(keys),torch.max(keys))}")
+            #torch.save(grad.cpu(), 'grad.pt')
+            #torch.save(buffer, 'buffer.pt')
             elmo.isfinite = False
         if not vals.isfinite().all():
-            print(f"ALERT: Samples not finite in:{torch.min(keys)}")
+            print(f"ALERT: Pushed Samples not finite in:{torch.min(keys)}")
         return grad
     return hook
 

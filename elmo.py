@@ -111,7 +111,7 @@ class PSElmo(torch.nn.Module):
             self.opt.update_in_place(grad.cpu(), self._param_buffers[name][0], self._param_buffers[name][1])
             self.kv.push(key, self._param_buffers[name])
             if not self._param_buffers[name].isfinite().all():
-                print(f"ALERT: LSTM is not finite in:{key}:{name}")
+                print(f"ALERT: Pushed LSTM is not finite in:{key}:{name}")
                 print(f"grad is finite:{grad.isfinite().all()}")
                 self.isfinite = False
             return grad
