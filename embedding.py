@@ -58,7 +58,14 @@ class PSEmbedding(torch.nn.Module):
         self._buffer = torch.empty(size, dtype=torch.float32)
         self.kv.pull(keys, self._buffer)
         if ((PSEmbedding._accumulators(self._buffer)) < 0).any():
-            print(f"ALERT: Pulled acc negative:{(torch.min(keys),torch.max(keys))}")
+            zero = torch.nonzero(self._buffer[:,1,:] < 0)
+            index = zero[:,0].unique()
+            error_keys = keys[index]
+            print(f"ALERT: Pulled embedding acc negative:{error_keys} key:range{(torch.min(keys), torch.max(keys))}")
+            print(f"key-size:{keys.size()}, buffer size:{self._buffer.size()}")
+            for x in error_keys:
+                print(x, torch.sum(keys == x))
+                print(self._buffer[keys == x])
 
     def forward(self, ids: torch.Tensor, device=None) -> torch.Tensor:
         if self._buffer is None:

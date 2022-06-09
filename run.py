@@ -7,6 +7,7 @@ from signal import signal, SIGINT
 from sys import exit
 from threading import Thread
 import torch
+from torch.nn import init
 from torch import cuda
 from torch.multiprocessing import Process, set_start_method
 from torch.utils.data import DataLoader
@@ -15,10 +16,10 @@ import lapse
 
 from cli import parse_arguments
 from data import OneBillionWordIterableDataset
-from elmo import PSElmo
+#from elmo import PSElmo
 from iterator import PrefetchIterator
 from loss import PSSampledSoftmaxLoss
-from optimizer import PSSGD, PSAdagrad
+#from optimizer import PSSGD, PSAdagrad
 from utils import load_vocab, batch_to_word_ids
 
 
@@ -27,195 +28,58 @@ def run_worker(worker_id, args, kv):
     kv.barrier() # wait for all workers to finish
     kv.finalize()
 
+def loguniform(args):
+    log_samples = torch.rand(3000) * np.log(args.num_tokens + 1)
+    return torch.exp(log_samples).long() - 1
+
 
 def train(worker_id, args, kv):
     print(f"Worker {worker_id} training on {args.device}")
     kv.begin_setup()
-    #print(f"Worker {worker_id} Adagrad")
-    optimizer = PSAdagrad(
-        lr = 0.2,
-        initial_accumulator_value=1.0,
-        eps = 1e-07,
-    )
-    print(f"Worker {worker_id} Elmo")
-    elmo = PSElmo(
-        kv=kv,
-        key_offset=0,
-        num_tokens=args.num_tokens,
-        embedding_dim=args.embedding_dim,
-        num_layers=args.layers,
-        lstm_cell_size=args.cell_size,
-        lstm_recurrent_dropout=args.recurrent_dropout,
-        dropout=args.dropout,
-        opt=optimizer,
-        init=(worker_id==0),
-    )
-    print(f"Worker {worker_id} classifier")
-    classifier = PSSampledSoftmaxLoss(
-        kv=kv,
-        key_offset=len(PSElmo.lens(args.num_tokens, args.embedding_dim, args.cell_size, args.layers)),
-        num_embeddings=args.num_tokens,
-        embedding_dim=args.embedding_dim,
-        num_samples=args.samples,
-        opt=optimizer,
-        init=(worker_id==0),
-    )
-    # move model to computing device
-    print(f"Worker {worker_id} move")
-    elmo.to(args.device)
-    classifier.to(args.device)
-    print(f"Worker {worker_id} end")
+    if worker_id == 0:
+        keys = torch.LongTensor(range(args.num_tokens))
+        vals = torch.empty(keys.size()+(2,args.embedding_dim), dtype=torch.float32)
+        init.normal_(vals[:,0,:])
+        vals[:,1,:] = 1
+        kv.set(keys, vals)
     kv.end_setup()
+    kv.wait_sync()    
     print(f"Worker {worker_id} sync")
-    #kv.wait_sync()
-    #kv.barrier()
-    kv.wait_sync()
 
-    #torch.autograd.set_detect_anomaly(True)
-    for epoch in range(args.epochs):
-        if worker_id == 0:
-            print(f"Starting epoch {epoch}")
-        # set up training data
-        train_dataset = OneBillionWordIterableDataset(args.dataset)
-        train_collate = partial(prepare_batch, kv, worker_id, elmo, classifier, True, args)
-        train_loader = DataLoader(train_dataset, batch_size=args.batch_size * args.world_size * args.workers_per_node, collate_fn=train_collate)
-        train_iterator = PrefetchIterator(args.intent_ahead, kv, train_loader)
-        print(f"Begin epoch {epoch} at {datetime.now()}")
-        for i, (word_ids, mask, mask_rolled, targets, sample_id) in enumerate(train_iterator):
-            elmo.pull_dense_and_embeddings(word_ids)
-            classifier.pull(targets)
-            sample_ids, samples = pull_samples(kv, sample_id, classifier, optimizer, args.device, args)
-
-            elmo_representation, word_mask = elmo(word_ids)
-            context_forward = elmo_representation[:, :, :args.embedding_dim][mask_rolled]
-            context_backward = elmo_representation[:, :, args.embedding_dim:][mask]
-            context = torch.cat((context_forward, context_backward))
-
-            loss = classifier(context, targets, sample_ids, samples, args.num_tries, args.sample_replacement) / targets.size(0)
-            if (not loss.isfinite()) or (not elmo.isfinite) or (not elmo.word_embedding.isfinite) or (not classifier.embedding.isfinite):
-                print("Finite checks:")
-                print(f"context:{context.isfinite().all()}")
-                print(f"targets:{targets.isfinite().all()}")
-                print(f"samples:{samples.isfinite().all()}")
-                print(f"elmo_representation:{elmo_representation.isfinite().all()}")
-                print(f"elmo_embedding_buffer:{elmo.word_embedding._buffer.isfinite().all()}")
-                print(f"loss_embedding_buffer:{classifier.embedding._buffer.isfinite().all()}")
-                for i, (name, param) in enumerate(elmo.named_parameters()):
-                    if not param.isfinite().all():
-                        print(f"elmo_buffer_{name}:{param.isfinite().all()}")
-                os.kill(os.getpid(), SIGINT)
-            loss.backward()
-            kv.advance_clock()
-            print('[%6d] loss: %.3f' % (i, loss.item()))
-        print(f"Finish epoch {epoch} at {datetime.now()}")
-
-        # synchronize replicas
-        kv.wait_sync()
-        kv.barrier()
-        kv.wait_sync()
-
-        # calculate test loss
-        if args.testset:
-            elmo.pull_dense_parameters()
-            elmo.eval()
-            classifier.eval()
-            with torch.no_grad():
-                test_dataset = OneBillionWordIterableDataset(args.testset)
-                test_collate = partial(prepare_batch, kv, worker_id, elmo, classifier, False, args)
-                test_loader = DataLoader(test_dataset, batch_size=1 * args.world_size * args.workers_per_node, collate_fn=test_collate)
-                test_iterator = PrefetchIterator(args.intent_ahead, kv, test_loader)
-                all_ids = torch.tensor(range(args.num_tokens))
-                all_weights = classifier.embedding(all_ids, args.device)
-                acc_loss = 0
-                num_loss = 0
-                for i, (word_ids, mask, mask_rolled, targets) in enumerate(test_iterator):
-                    elmo.word_embedding.pull(word_ids)
-
-                    elmo_representation, word_mask = elmo(word_ids)
-                    context_forward = elmo_representation[:, :, :args.embedding_dim][mask_rolled]
-                    context_backward = elmo_representation[:, :, args.embedding_dim:][mask]
-                    context = torch.cat((context_forward, context_backward))
-
-                    loss = classifier(context, targets, samples=all_weights) / targets.size(0)
-                    acc_loss = acc_loss + loss
-                    num_loss = num_loss + 1
-                    kv.advance_clock()
-                    print('[%6d] loss: %.3f' % (i, loss.item()))
-
-                # allreduce average loss
-                loss_key = torch.tensor([kv.num_keys-1])
-                loss_val = torch.zeros((1), dtype=torch.float32)
-                kv.set(loss_key, loss_val)
-                kv.wait_sync()
-                kv.barrier() # synchronize replicas
-                kv.wait_sync()
-                kv.push(loss_key, (acc_loss / num_loss).cpu())
-                kv.wait_sync()
-                kv.barrier() # synchronize replicas
-                kv.wait_sync()
-                if worker_id == 0:
-                    kv.pull(loss_key, loss_val)
-                    avg_loss = loss_val / (args.world_size * args.workers_per_node)
-                    print('avg test loss: %.3f' % (avg_loss).item())
-
-            elmo.train()
-            classifier.train()
+    train_iterator = PrefetchIterator(args.intent_ahead, kv, lambda: prepare_batch(kv, args))
+    for i, targets in enumerate(train_iterator):
+        keys = targets
+        size = keys.size() + (2, args.embedding_dim)
+        vals = torch.empty(size, dtype=torch.float32)
+        kv.pull(keys, vals)
+        if ((vals[:,1,:]) < 0).any():
+            zero = torch.nonzero(vals[:,1,:] < 0)
+            index = zero[:,0].unique()
+            error_keys = keys[index]
+            print(f"ALERT: Pulled embedding acc negative:{error_keys} key:range{(torch.min(keys), torch.max(keys))}")
+            print(f"key-size:{keys.size()}, buffer size:{vals.size()}")
+            for x in error_keys:
+                print(x, torch.sum(keys == x))
+                print(vals[keys == x])
+        
+        kv.advance_clock()
+        print('[%6d]' % (i))
+        if i > 10000:
+            break;
 
 
-def prepare_batch(kv, worker_id, elmo, classifier, sample, args, batch):
+
+def prepare_batch(kv, args):
     target_time = kv.current_clock() + args.intent_ahead
 
-    worker_split = batch[worker_id::args.world_size * args.workers_per_node]
-    word_ids = batch_to_word_ids(worker_split, args.vocab2id, args.max_sequence_length)
-    elmo.intent_embeddings(word_ids.flatten(), target_time)
+    word_ids = loguniform(args)
+    word_ids = word_ids[word_ids > 0]
+    targets = torch.cat((word_ids, word_ids))
+    targets -= 1
 
-    mask = word_ids > 0
-    mask[:, 0] = False
-    mask_rolled = mask.roll(-1, 1)
-    targets_forward = word_ids[mask]
-    targets_backward = word_ids[mask_rolled]
-    targets = torch.cat((targets_forward, targets_backward))
-    targets -= 1 # offset 1-based token ids to 0-based sampling ids
+    kv.intent(word_ids.flatten(), target_time)
 
-    if not sample:
-        return word_ids, mask, mask_rolled, targets
-
-    classifier.intent(word_ids.flatten(), target_time)
-    sample_id = kv.prepare_sample(args.samples, target_time)
-
-    return word_ids, mask, mask_rolled, targets, sample_id
-
-def pull_samples(kv, sample_id, classifier, opt, device, args):
-    keys = torch.empty((args.samples), dtype=torch.long)
-    vals = torch.empty((args.samples, 2, args.embedding_dim+1))
-    kv.wait(kv.pull_sample(sample_id, keys, vals))
-    if (vals[:,1,:] < 0).any():
-        print(f"ALERT: Pulled sample acc negative:{(torch.min(keys),torch.max(keys))}")
-    ids = keys - classifier.embedding.key_offset
-    samples = vals[:,0,:].to(device)
-    samples.requires_grad_()
-    samples.register_hook(grad_hook(kv, keys, vals, opt))
-
-    return ids, samples
-
-def grad_hook(kv, keys: torch.Tensor, vals: torch.Tensor, optimizer) -> torch.Tensor:
-    def hook(grad: torch.Tensor) -> torch.Tensor:
-        optimizer.update_in_place(grad.cpu(), vals[:,0,:], vals[:,1,:])
-        if (vals[:,1,:] < 0).any():
-            print(f"ALERT: stored sample acc negative:{(torch.min(keys),torch.max(keys))}")
-            torch.save(grad.cpu(), 'grad.pt')
-            torch.save(buffer, 'buffer.pt')
-            elmo.isfinite = False
-        kv.push(keys, vals)
-        if (vals[:,1,:] < 0).any():
-            print(f"ALERT: Pulled sample acc negative:{(torch.min(keys),torch.max(keys))}")
-            torch.save(grad.cpu(), 'grad.pt')
-            torch.save(buffer, 'buffer.pt')
-            elmo.isfinite = False
-        if not vals.isfinite().all():
-            print(f"ALERT: Samples not finite in:{torch.min(keys)}")
-        return grad
-    return hook
+    return targets
 
 def init_scheduler(dummy, args):
     os.environ['DMLC_NUM_SERVER'] = str(args.world_size)
@@ -243,9 +107,9 @@ def init_node(local_rank, lens, args):
     server.barrier()
 
     # setup sampling
-    sample_min = len(PSElmo.lens(args.num_tokens, args.embedding_dim, args.cell_size, args.layers))
-    sample_max = sample_min + args.num_tokens
-    server.enable_sampling_support(args.sampling_scheme, args.sample_replacement, "log-uniform", sample_min, sample_max)
+    #sample_min = len(PSElmo.lens(args.num_tokens, args.embedding_dim, args.cell_size, args.layers))
+    #sample_max = sample_min + args.num_tokens
+    #server.enable_sampling_support(args.sampling_scheme, args.sample_replacement, "log-uniform", sample_min, sample_max)
 
     threads = []
     for w in range(args.workers_per_node):
@@ -305,9 +169,10 @@ if __name__ == "__main__":
     print(f"Loaded vocabulary of {args.num_tokens} tokens.")
 
     # calculate parameter lens
-    lens_elmo = PSElmo.lens(args.num_tokens, args.embedding_dim, args.cell_size, args.layers)
-    lens_classifier = PSSampledSoftmaxLoss.lens(args.num_tokens, args.embedding_dim)
-    lens = torch.cat((lens_elmo,lens_classifier,torch.ones(1)))
+    #lens_elmo = PSElmo.lens(args.num_tokens, args.embedding_dim, args.cell_size, args.layers)
+    #lens_classifier = PSSampledSoftmaxLoss.lens(args.num_tokens, args.embedding_dim)
+    #lens = torch.cat((lens_elmo,lens_classifier,torch.ones(1)))
+    lens = torch.ones(args.num_tokens) * 2 * args.embedding_dim
     args.num_keys = len(lens)
 
     # estimate num_tries for loss calculation if necessary

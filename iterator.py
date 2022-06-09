@@ -8,13 +8,13 @@ class PrefetchIterator:
     """ Wrapper for a DataLoader - pre loads num_batches many batches
     (intent signaling may occure in the collate function of the DataLoader)
     """
-    def __init__(self, num_batches, kv, dataloader):
+    def __init__(self, num_batches, kv, sampler):
         self.num_batches = num_batches
-        self.loader = dataloader
+        self.sampler = sampler
         self.kv = kv
 
     def __iter__(self):
-        self.iter = iter(self.loader)
+        #self.iter = iter(self.loader)
         self.iter_done = False
         self.queue = deque()
         
@@ -28,7 +28,7 @@ class PrefetchIterator:
     def loadnext(self):
         if not self.iter_done:
             try:
-                self.queue.append(next(self.iter))
+                self.queue.append(self.sampler())
             except StopIteration:
                 self.iter_done = True
 
