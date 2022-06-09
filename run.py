@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+from datetime import datetime
 from functools import partial
 import numpy as np
 import os
@@ -48,7 +49,7 @@ def train(worker_id, args, kv):
         init=(worker_id==0),
     )
     classifier = PSSampledSoftmaxLoss(
-        kv=kv, 
+        kv=kv,
         key_offset=len(PSElmo.lens(args.num_tokens, args.embedding_dim, args.cell_size, args.layers)),
         num_embeddings=args.num_tokens,
         embedding_dim=args.embedding_dim,
@@ -64,12 +65,13 @@ def train(worker_id, args, kv):
 
     for epoch in range(args.epochs):
         if worker_id == 0:
-            print(f"starting epoch {epoch}")
+            print(f"Starting epoch {epoch}")
         # set up training data
         train_dataset = OneBillionWordIterableDataset(args.dataset)
         train_collate = partial(prepare_batch, kv, worker_id, elmo, classifier, True, args)
         train_loader = DataLoader(train_dataset, batch_size=args.batch_size * args.world_size * args.workers_per_node, collate_fn=train_collate)
         train_iterator = PrefetchIterator(args.intent_ahead, kv, train_loader)
+        print(f"Begin epoch {epoch} at {datetime.now()}")
         for i, (word_ids, mask, mask_rolled, targets, sample_id) in enumerate(train_iterator):
             elmo.pull_dense_and_embeddings(word_ids)
             classifier.pull(targets)
@@ -84,6 +86,7 @@ def train(worker_id, args, kv):
             loss.backward()
             kv.advance_clock()
             print('[%6d] loss: %.3f' % (i, loss.item()))
+        print(f"Finished epoch {epoch} at {datetime.now()}")
 
         # synchronize replicas
         kv.wait_sync()
@@ -156,7 +159,7 @@ def prepare_batch(kv, worker_id, elmo, classifier, sample, args, batch):
     if not sample:
         return word_ids, mask, mask_rolled, targets
 
-    classifier.intent(word_ids.flatten(), target_time)
+    classifier.intent(word_ids.flatten()-1, target_time)
     sample_id = kv.prepare_sample(args.samples, target_time)
 
     return word_ids, mask, mask_rolled, targets, sample_id
@@ -184,7 +187,7 @@ def init_scheduler(dummy, args):
     os.environ['DMLC_ROLE'] = 'scheduler'
     os.environ['DMLC_PS_ROOT_URI'] = args.root_uri
     os.environ['DMLC_PS_ROOT_PORT'] = args.root_port
-
+    print("running scheduler")
     lapse.scheduler(args.num_keys, args.workers_per_node)
 
 
@@ -194,7 +197,7 @@ def init_node(local_rank, lens, args):
     os.environ['DMLC_ROLE'] = 'server'
     os.environ['DMLC_PS_ROOT_URI'] = args.root_uri
     os.environ['DMLC_PS_ROOT_PORT'] = args.root_port
-    
+
     lapse.setup(args.num_keys, args.workers_per_node)
     server = lapse.Server(lens)
     rank = server.my_rank()
