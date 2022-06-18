@@ -1,7 +1,7 @@
-from collections import deque 
+from collections import deque
 import torch
 from torch.utils.data import DataLoader
-import lapse
+import adaps
 
 
 class PrefetchIterator:
@@ -17,14 +17,14 @@ class PrefetchIterator:
         self.iter = iter(self.loader)
         self.iter_done = False
         self.queue = deque()
-        
+
         # fill queue with initial num_batches
         for _ in range(self.num_batches):
             self.loadnext()
             self.kv.advance_clock()
 
         return self
-    
+
     def loadnext(self):
         if not self.iter_done:
             try:
@@ -34,7 +34,7 @@ class PrefetchIterator:
 
     def __next__(self):
         self.loadnext()
-        
+
         if not self.queue:
             raise StopIteration
 

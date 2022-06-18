@@ -4,7 +4,7 @@ from embedding import PSEmbedding
 from optimizer import PSOptimizer
 from statistics import mean
 import torch
-import lapse
+import adaps
 import numpy as np
 
 # based on allennlp.modules.sampled_softmax_loss
@@ -16,7 +16,7 @@ class PSSampledSoftmaxLoss(torch.nn.Module):
 
     def __init__(
         self,
-        kv: lapse.Worker,
+        kv: adaps.Worker,
         key_offset: int = 0,
         num_embeddings: int = 1024,
         embedding_dim: int = 512,

@@ -1,7 +1,7 @@
 import torch
 from torch.nn import init
 from optimizer import PSOptimizer
-import lapse
+import adaps
 
 
 class PSEmbedding(torch.nn.Module):
@@ -11,7 +11,7 @@ class PSEmbedding(torch.nn.Module):
 
     def __init__(
         self,
-        kv: lapse.Worker,
+        kv: adaps.Worker,
         key_offset: int = 0,
         num_embeddings: int = 1024,
         embedding_dim: int = 512,

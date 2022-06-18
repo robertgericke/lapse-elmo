@@ -5,7 +5,7 @@ from optimizer import PSOptimizer
 import torch
 from torch.nn import Dropout, Parameter
 from typing import List
-import lapse
+import adaps
 import functools
 import sys
 
@@ -37,7 +37,7 @@ class PSElmo(torch.nn.Module):
 
     def __init__(
         self,
-        kv: lapse.Worker,
+        kv: adaps.Worker,
         num_tokens: int,
         key_offset: int = 0,
         embedding_dim: int = 512,

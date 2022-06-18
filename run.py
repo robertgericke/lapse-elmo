@@ -11,7 +11,7 @@ from torch import cuda
 from torch.multiprocessing import Process, set_start_method
 from torch.utils.data import DataLoader
 
-import lapse
+import adaps
 
 from cli import parse_arguments
 from data import OneBillionWordIterableDataset
@@ -188,7 +188,7 @@ def init_scheduler(dummy, args):
     os.environ['DMLC_PS_ROOT_URI'] = args.root_uri
     os.environ['DMLC_PS_ROOT_PORT'] = args.root_port
     print("running scheduler")
-    lapse.scheduler(args.num_keys, args.workers_per_node)
+    adaps.scheduler(args.num_keys, args.workers_per_node)
 
 
 def init_node(local_rank, lens, args):
@@ -198,8 +198,8 @@ def init_node(local_rank, lens, args):
     os.environ['DMLC_PS_ROOT_URI'] = args.root_uri
     os.environ['DMLC_PS_ROOT_PORT'] = args.root_port
 
-    lapse.setup(args.num_keys, args.workers_per_node)
-    server = lapse.Server(lens)
+    adaps.setup(args.num_keys, args.workers_per_node)
+    server = adaps.Server(lens)
     rank = server.my_rank()
     print(f"Started server with rank {rank}.")
 
@@ -227,7 +227,7 @@ def init_node(local_rank, lens, args):
             args.device = torch.device("cpu")
 
         # run worker
-        t = Thread(target=run_worker, args=(worker_id, args, lapse.Worker(w, server)))
+        t = Thread(target=run_worker, args=(worker_id, args, adaps.Worker(w, server)))
         t.start()
         threads.append(t)
 
