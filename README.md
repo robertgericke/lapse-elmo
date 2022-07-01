@@ -7,7 +7,7 @@ In contrast to previous ELMo implementations, the model uses a direct embedding 
 ### Dependencies
 The model is implemented in the [PyTorch](https://pytorch.org/) framework and uses multiple ELMo related modules of the [AllenNLP](https://allennlp.org/) library. Install both via the following command:
 ```bash
-pip3 install allennlp torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu113
+pip3 install allennlp torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu116
 ```
 
 The distributed training relies on the parameter server [Lapse](https://github.com/alexrenz/lapse-ps). Use the following commands to fetch required dependencies, build the parameter server and install the python bindings:
