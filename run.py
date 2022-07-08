@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import partial
 import numpy as np
 import os
@@ -71,7 +71,8 @@ def train(worker_id, args, kv):
         train_collate = partial(prepare_batch, kv, worker_id, elmo, classifier, True, args)
         train_loader = DataLoader(train_dataset, batch_size=args.batch_size * args.world_size * args.workers_per_node, collate_fn=train_collate)
         train_iterator = PrefetchIterator(args.intent_ahead, kv, train_loader)
-        print(f"Begin epoch {epoch} at {datetime.now()}")
+        start = datetime.now()
+        print(f"Begin epoch {epoch} at {start}")
         for i, (word_ids, mask, mask_rolled, targets, sample_id) in enumerate(train_iterator):
             elmo.pull_dense_and_embeddings(word_ids)
             classifier.pull(targets)
@@ -86,7 +87,8 @@ def train(worker_id, args, kv):
             loss.backward()
             kv.advance_clock()
             print('[%6d] loss: %.3f' % (i, loss.item()))
-        print(f"Finished epoch {epoch} at {datetime.now()}")
+        stop = datetime.now()
+        print(f"Finished epoch {epoch} at {stop}\nTook {round((stop-start)/timedelta(minutes=1),3)} minutes")
 
         # synchronize replicas
         kv.wait_sync()
