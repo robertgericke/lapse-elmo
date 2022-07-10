@@ -69,7 +69,7 @@ def train(worker_id, args, kv):
         # set up training data
         train_dataset = OneBillionWordIterableDataset(args.dataset)
         train_collate = partial(prepare_batch, kv, worker_id, elmo, classifier, True, args)
-        train_loader = DataLoader(train_dataset, batch_size=args.batch_size * args.world_size * args.workers_per_node, collate_fn=train_collate)
+        train_loader = DataLoader(train_dataset, batch_size=args.batch_size * args.world_size * args.workers_per_node, collate_fn=train_collate, drop_last=True)
         train_iterator = PrefetchIterator(args.intent_ahead, kv, train_loader)
         start = datetime.now()
         print(f"Begin epoch {epoch} at {start}")
@@ -103,7 +103,7 @@ def train(worker_id, args, kv):
             with torch.no_grad():
                 test_dataset = OneBillionWordIterableDataset(args.testset)
                 test_collate = partial(prepare_batch, kv, worker_id, elmo, classifier, False, args)
-                test_loader = DataLoader(test_dataset, batch_size=1 * args.world_size * args.workers_per_node, collate_fn=test_collate)
+                test_loader = DataLoader(test_dataset, batch_size=1 * args.world_size * args.workers_per_node, collate_fn=test_collate, drop_last=True)
                 test_iterator = PrefetchIterator(args.intent_ahead, kv, test_loader)
                 all_ids = torch.tensor(range(args.num_tokens))
                 all_weights = classifier.embedding(all_ids, args.device)
