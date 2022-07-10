@@ -27,14 +27,13 @@ def run_worker(worker_id, args, kv):
     kv.barrier() # wait for all workers to finish
     kv.finalize()
 
-
 def train(worker_id, args, kv):
     print(f"Worker {worker_id} training on {args.device}")
     kv.begin_setup()
     optimizer = PSAdagrad(
-        lr = 0.2,
-        initial_accumulator_value=1.0,
-        eps = 1e-07,
+        lr = args.learning_rate,
+        initial_accumulator_value=args.initial_accumulator_value,
+        eps = args.epsilon,
     )
     elmo = PSElmo(
         kv=kv,
@@ -137,7 +136,7 @@ def train(worker_id, args, kv):
                 if worker_id == 0:
                     kv.pull(loss_key, loss_val)
                     avg_loss = loss_val / (args.world_size * args.workers_per_node)
-                    print('avg test loss: %.3f' % (avg_loss).item())
+                    print(f'Epoch {epoch} avg test loss: %.3f' % (avg_loss).item())
 
             elmo.train()
             classifier.train()

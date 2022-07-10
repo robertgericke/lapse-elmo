@@ -19,6 +19,7 @@ def parse_arguments():
     distribution.add_argument('-ia', '--intent_ahead', default=1, type=int, help='number of training batches to pre load and intent')
     distribution.add_argument('-nw', '--workers_per_node', default=1, type=int, help='number of worker threads per node')
     distribution.add_argument('-ws', '--world_size', type=int, help='total number of server nodes')
+    distribution.add_argument('-t', '--tracker', default=False, action='store_true', help='use this option if running with adaps tracker scripts')    
     # elmo options
     elmo = parser.add_argument_group('elmo')
     elmo.add_argument('-ed', '--embedding_dim', default=128, type=int, help='dimension of the word embeddings')
@@ -27,7 +28,11 @@ def parse_arguments():
     elmo.add_argument('-rd', '--recurrent_dropout', default=0.1, type=float, help='recurrent dropout for each lstm')
     elmo.add_argument('-fd', '--dropout', default=0.1, type=float, help='final dropout for elmo representations')
     elmo.add_argument('-sl', '--max_sequence_length', default=400, type=int, help='maximum sequence length (clipped above)')
-    elmo.add_argument('-t', '--tracker', default=False, action='store_true', help='use this option if running with lapse tracker scripts')
+    # optimizer parameters
+    optimizer = parser.add_argument_group('optimizer')
+    optimizer.add_argument('-eps', '--epsilon', default=1e-07, type=float, help='adagrad epsilon')
+    optimizer.add_argument('-iac', '--initial_accumulator_value', default=1.0, type=float, help='adagrad initial accumulator value')
+    optimizer.add_argument('-lr', '--learning_rate', default=0.2, type=float, help='adagrad learning rate')
     # training options
     training = parser.add_argument_group('training')
     training.add_argument('-e', '--epochs', default=2, type=int, help='number of epochs to run')
