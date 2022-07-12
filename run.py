@@ -147,7 +147,7 @@ def prepare_batch(kv, worker_id, elmo, classifier, sample, args, batch):
 
     worker_split = batch[worker_id::args.world_size * args.workers_per_node]
     word_ids = batch_to_word_ids(worker_split, args.vocab2id, args.max_sequence_length)
-    elmo.intent_embeddings(word_ids.flatten(), target_time)
+    elmo.intent_embeddings(word_ids.unique(), target_time)
 
     mask = word_ids > 0
     mask[:, 0] = False
@@ -160,7 +160,7 @@ def prepare_batch(kv, worker_id, elmo, classifier, sample, args, batch):
     if not sample:
         return word_ids, mask, mask_rolled, targets
 
-    classifier.intent(word_ids.flatten()-1, target_time)
+    classifier.intent(targets.unique(), target_time)
     sample_id = kv.prepare_sample(args.samples, target_time)
 
     return word_ids, mask, mask_rolled, targets, sample_id
@@ -168,7 +168,7 @@ def prepare_batch(kv, worker_id, elmo, classifier, sample, args, batch):
 def pull_samples(kv, sample_id, classifier, opt, device, args):
     keys = torch.empty((args.samples), dtype=torch.long)
     vals = torch.empty((args.samples, 2, args.embedding_dim+1))
-    kv.wait(kv.pull_sample(sample_id, keys, vals))
+    kv.pull_sample(sample_id, keys, vals)
     ids = keys - classifier.embedding.key_offset
     samples = vals[:,0,:].to(device)
     samples.requires_grad_()
