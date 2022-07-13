@@ -63,15 +63,16 @@ def train(worker_id, args, kv):
     kv.wait_sync()
 
     for epoch in range(args.epochs):
-        if worker_id == 0:
-            print(f"Starting epoch {epoch}")
         # set up training data
         train_dataset = OneBillionWordIterableDataset(args.dataset)
         train_collate = partial(prepare_batch, kv, worker_id, elmo, classifier, True, args)
         train_loader = DataLoader(train_dataset, batch_size=args.batch_size * args.world_size * args.workers_per_node, collate_fn=train_collate, drop_last=True)
         train_iterator = PrefetchIterator(args.intent_ahead, kv, train_loader)
+        
         start = datetime.now()
-        print(f"Begin epoch {epoch} at {start}")
+        if worker_id == 0:
+            print(f"Begin epoch {epoch} at {start}")
+            
         for i, (word_ids, mask, mask_rolled, targets, sample_id) in enumerate(train_iterator):
             elmo.pull_dense_and_embeddings(word_ids)
             classifier.pull(targets)
@@ -86,13 +87,18 @@ def train(worker_id, args, kv):
             loss.backward()
             kv.advance_clock()
             print('[%6d] loss: %.3f' % (i, loss.item()))
+            
         stop = datetime.now()
-        print(f"Finished epoch {epoch} at {stop}\nTook {round((stop-start)/timedelta(minutes=1),3)} minutes")
+        print(f"Worker {worker_id} finished epoch {epoch} after {round((stop-start)/timedelta(minutes=1),3)} minutes")
 
         # synchronize replicas
         kv.wait_sync()
         kv.barrier()
         kv.wait_sync()
+        
+        if worker_id == 0:
+            end = datetime.now()
+            print(f"End epoch {epoch} at {end}\nEpoch {epoch} took {round((end-start)/timedelta(minutes=1),3)} minutes")
 
         # calculate test loss
         if args.testset:
