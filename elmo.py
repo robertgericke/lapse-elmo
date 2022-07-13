@@ -27,7 +27,7 @@ class PSElmo(torch.nn.Module):
         return torch.tensor([1]*(num_layers+1+1))*2
 
     def _lens_embedding(num_tokens, embedding_dim):
-        return PSEmbedding.lens(num_tokens+1, embedding_dim)
+        return PSEmbedding.lens(num_tokens+1, embedding_dim, False)
 
     def lens(num_tokens, embedding_dim, lstm_cell_size, num_layers):
         lens_embedding = PSElmo._lens_embedding(num_tokens, embedding_dim)

@@ -12,7 +12,7 @@ import numpy as np
 
 class PSSampledSoftmaxLoss(torch.nn.Module):
     def lens(num_embeddings, embedding_dim):
-        return PSEmbedding.lens(num_embeddings, embedding_dim+1)
+        return PSEmbedding.lens(num_embeddings, embedding_dim, True)
 
     def __init__(
         self,
@@ -27,12 +27,13 @@ class PSSampledSoftmaxLoss(torch.nn.Module):
         super().__init__()
         self.num_samples = num_samples
         self._num_words = num_embeddings
-        self._log_num_words_p1 = np.log(num_embeddings + 1)
+        self._log_num_words_p1 = np.log1p(num_embeddings)
         self.embedding = PSEmbedding(
             kv=kv, 
             key_offset=key_offset,
             num_embeddings=num_embeddings, 
-            embedding_dim=embedding_dim+1, 
+            embedding_dim=embedding_dim,
+            bias=True,
             opt=opt,
             init=init,
         )

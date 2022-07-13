@@ -2,11 +2,14 @@ import torch
 from torch.nn import init
 from optimizer import PSOptimizer
 import adaps
+import numpy as np
 
 
 class PSEmbedding(torch.nn.Module):
 
-    def lens(num_embeddings, embedding_dim):
+    def lens(num_embeddings, embedding_dim, bias=False):
+        if bias:
+            embedding_dim += 1
         return torch.ones(num_embeddings) * embedding_dim * 2 #twice embedding_dim for optim params
 
     def __init__(
@@ -15,6 +18,7 @@ class PSEmbedding(torch.nn.Module):
         key_offset: int = 0,
         num_embeddings: int = 1024,
         embedding_dim: int = 512,
+        bias: bool = False,
         opt: PSOptimizer = None,
         init: bool = True,
         max_size: int = 2**14
@@ -24,17 +28,22 @@ class PSEmbedding(torch.nn.Module):
         self.key_offset = key_offset
         self.num_embeddings = num_embeddings
         self.embedding_dim = embedding_dim
+        if bias:
+            self.embedding_dim += 1
         self.opt = opt
         self._buffer = None
         self.max_size = max_size
         if init:
-            self._init_embeddings()
+            self._init_embeddings(bias)
 
-    def _init_embeddings(self, ):
+    def _init_embeddings(self, bias):
         for ids in torch.LongTensor(range(self.num_embeddings)).split(self.max_size):
             keys = ids + self.key_offset
             values = torch.empty(keys.size()+(2,self.embedding_dim), dtype=torch.float32)
             init.normal_(PSEmbedding._embeddings(values))
+            if bias:
+                values /= np.sqrt(self.embedding_dim-1)
+                values[:,0,0] = 0
             PSEmbedding._accumulators(values)[:] = self.opt.initial_accumulator_value
             self.kv.set(keys, values)
 
