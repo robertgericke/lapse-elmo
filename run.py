@@ -68,11 +68,11 @@ def train(worker_id, args, kv):
         train_collate = partial(prepare_batch, kv, worker_id, elmo, classifier, True, args)
         train_loader = DataLoader(train_dataset, batch_size=args.batch_size * args.world_size * args.workers_per_node, collate_fn=train_collate, drop_last=True)
         train_iterator = PrefetchIterator(args.intent_ahead, kv, train_loader)
-        
+
         start = datetime.now()
         if worker_id == 0:
             print(f"Begin epoch {epoch} at {start}")
-            
+
         for i, (word_ids, mask, mask_rolled, targets, sample_id) in enumerate(train_iterator):
             elmo.pull_dense_and_embeddings(word_ids)
             classifier.pull(targets)
@@ -87,7 +87,7 @@ def train(worker_id, args, kv):
             loss.backward()
             kv.advance_clock()
             print('[%6d] loss: %.3f' % (i, loss.item()))
-            
+
         stop = datetime.now()
         print(f"Worker {worker_id} finished epoch {epoch} after {round((stop-start)/timedelta(minutes=1),3)} minutes")
 
@@ -95,7 +95,7 @@ def train(worker_id, args, kv):
         kv.wait_sync()
         kv.barrier()
         kv.wait_sync()
-        
+
         if worker_id == 0:
             end = datetime.now()
             print(f"End epoch {epoch} at {end}\nEpoch {epoch} took {round((end-start)/timedelta(minutes=1),3)} minutes")
@@ -112,8 +112,10 @@ def train(worker_id, args, kv):
                 test_iterator = PrefetchIterator(args.intent_ahead, kv, test_loader)
                 all_ids = torch.tensor(range(args.num_tokens))
                 all_weights = classifier.embedding(all_ids, args.device)
+                # Kahan sum / avg
                 acc_loss = 0
                 num_loss = 0
+                c = 0
                 for i, (word_ids, mask, mask_rolled, targets) in enumerate(test_iterator):
                     elmo.word_embedding.pull(word_ids)
 
@@ -123,8 +125,12 @@ def train(worker_id, args, kv):
                     context = torch.cat((context_forward, context_backward))
 
                     loss = classifier(context, targets, samples=all_weights) / targets.size(0)
-                    acc_loss = acc_loss + loss
-                    num_loss = num_loss + 1
+                    if loss.isfinite().all():
+                        y = loss - c
+                        t = acc_loss + y
+                        c = (t - acc_loss) - y
+                        acc_loss = t
+                        num_loss = num_loss + 1
                     kv.advance_clock()
                     print('[%6d] loss: %.3f' % (i, loss.item()))
 
